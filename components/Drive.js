@@ -13,7 +13,10 @@ export const RULES = {
   rough: { board: 30, alight: 50 },
   missed: { board: 0, alight: 50 },
 };
-const CAPACITY = 700; // 画车窗里乘客用的满载人数
+const CAPACITY = 700;
+// 真实站间距动辄一两公里，区间中段自动 3 倍速快进（速度表照常显示真实车速），离站台 450 米恢复正常
+const FF_SPEED = 3;
+const FF_UNTIL = 450; // 画车窗里乘客用的满载人数
 const CARS = 4;
 
 const CN_NUM = "零一二三四五六七八九";
@@ -87,7 +90,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
   useEffect(() => {
     g.current = {
       phase: "ready", x: 0, v: 0, t: 0, dwell: 0, over: 0, door: segIdx === 0 ? 0 : 1,
-      warnAt: 0, hudAt: 0, tip: "", load: onboard, boarded: false,
+      warnAt: 0, hudAt: 0, tip: "", load: onboard, boarded: false, called: false, ff: false,
     };
     setPhase("ready");
     setCard(null);
@@ -129,7 +132,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
     } else {
       sfx.chime();
       setTimeout(() => (stars === 3 ? sfx.perfect() : sfx.good()), 900);
-      announce(arriveCall(seg.to, trip.terminal, transfersAt(seg.to, line.id), seg.door));
+      if (!s.called) announce(arriveCall(seg.to, trip.terminal, transfersAt(seg.to, line.id), seg.door));
     }
   }
 
@@ -184,6 +187,10 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
       const inp = input.current;
       if (s.phase === "ready" && inp.acc) { s.phase = "run"; setPhase("run"); }
       if (s.phase === "run" || s.phase === "missed") {
+        const lim0 = seg.limit;
+        s.ff = s.phase === "run" && seg.len - s.x > FF_UNTIL &&
+          !(lim0 && s.x > lim0.from - 250 && s.x < lim0.to);
+        if (s.ff) dt *= FF_SPEED;
         let a = 0;
         if (s.phase === "missed" || inp.brk) a = -BRK;
         else if (inp.acc) a = ACC * (1 - Math.pow(s.v / vm, 3) * 0.7);
@@ -199,6 +206,11 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
           if (lim && s.x > lim.from && s.x < lim.to && s.v * 3.6 > lim.kmh + 2) {
             s.over += dt;
             if (now > s.warnAt) { sfx.warn(); s.warnAt = now + 400; }
+          }
+          // 列车进站时就播报到站（站台长约 120 米）
+          if (!s.called && remain < 150) {
+            s.called = true;
+            announce(arriveCall(seg.to, trip.terminal, transfersAt(seg.to, line.id), seg.door));
           }
           if (remain < -lv.tol) { s.phase = "missed"; setPhase("missed"); }
           else if (s.v === 0) {
@@ -230,7 +242,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
         }
         setHud({
           kmh: Math.round(s.v * 3.6), dist: Math.max(0, Math.round(remain)), hint,
-          tip: s.phase === "ready" ? "按住【加速】发车！" : s.tip, limit,
+          tip: s.phase === "ready" ? "按住【加速】发车！" : s.tip, limit, ff: s.ff,
           over: over && s.x > lim.from,
           off: Math.abs(remain) < 60 ? -remain : null,
         });
@@ -491,6 +503,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
           <div className="dist">距停车点<br /><b>{hud.dist}</b> 米</div>
           {hud.limit && <div className={"limit" + (hud.over ? " over" : "")}>{hud.limit}</div>}
           {lv.hint && phase === "run" && <div className={"hint " + hud.hint}>{hintText}</div>}
+          {hud.ff && phase === "run" && <div className="ff">⏩ 区间快进</div>}
         </div>
         {hud.off !== null && phase !== "doors" && (
           <div className="aim">
