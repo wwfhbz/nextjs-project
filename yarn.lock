@@ -2,6 +2,11 @@
 # yarn lockfile v1
 
 
+"@fontsource/zcool-kuaile@5":
+  version "5.3.0"
+  resolved "https://registry.yarnpkg.com/@fontsource/zcool-kuaile/-/zcool-kuaile-5.3.0.tgz#8d0b59ad1110c2df541b5466a45874abfb0bc3b9"
+  integrity sha512-jn4vpQ6QSVEckUn7uk5a9XcZMxEksTRqljmeE1VKRGMjGd6VoXdMyLGSdnTXSVwZLCCEHaIcm/2cdQuwvasJ9w==
+
 "@next/env@14.2.35":
   version "14.2.35"
   resolved "https://registry.yarnpkg.com/@next/env/-/env-14.2.35.tgz#e979016d0ca8500a47d41ffd02625fe29b8df35a"
