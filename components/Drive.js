@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { LEVELS, PINYIN, transfersAt } from "../lib/lines";
+import { LEVELS, transfersAt } from "../lib/lines";
 import { sfx, speak } from "../lib/sound";
 
 const ACC = 2.4; // 加速 m/s²
@@ -22,11 +22,14 @@ const CARS = 4;
 const CN_NUM = "零一二三四五六七八九";
 const EN_NUM = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
 const lineNum = (name) => parseInt(name, 10);
-const py = (station) => PINYIN[station] || station;
 // 换乘线路：中文 “轨道交通二号线、五号线”，英文 “Line Two and Line Five”
 const cnTransfer = (list) => "轨道交通" + list.map((n) => CN_NUM[lineNum(n)] + "号线").join("、");
 const enTransfer = (list) =>
   list.map((n) => "Line " + EN_NUM[lineNum(n)]).join(", ").replace(/, ([^,]*)$/, " and $1");
+
+// 英文播报是一串片段：普通字符串用英文语音读，{ zh: 站名 } 用中文语音读（站名念中文）
+const stn = (name) => ({ zh: name });
+const enTransferPart = (tr) => (tr.length ? [` You can transfer to ${enTransfer(tr)}.`] : []);
 
 // 合肥地铁式播报词
 function departCall(to, terminal, tr, courtesy) {
@@ -34,9 +37,11 @@ function departCall(to, terminal, tr, courtesy) {
   const zh = `本次列车开往${terminal}方向，下一站${last ? "，终点站" : ""}${to}` +
     `${tr.length ? "，可换乘" + cnTransfer(tr) : ""}。请刚上车的乘客往车厢中部走，要下车的乘客请提前做好准备。` +
     (courtesy ? "各位尊敬的乘客，使用电子设备时请勿外放声音，感谢您的配合。" : "");
-  const en = `This train is bound for ${py(terminal)}. The next stop is ${py(to)}` +
-    `${last ? ", the terminal station" : ""}.` +
-    `${tr.length ? " You can transfer to " + enTransfer(tr) + "." : ""} Please get ready for your arrival.`;
+  const en = [
+    "This train is bound for", stn(terminal),
+    last ? ". The next stop is the terminal station," : ". The next stop is", stn(to), ".",
+    ...enTransferPart(tr), " Please get ready for your arrival.",
+  ];
   return { zh, en };
 }
 function arriveCall(to, terminal, tr, door) {
@@ -45,16 +50,20 @@ function arriveCall(to, terminal, tr, door) {
     return {
       zh: `终点站${to}到了，请带好随身物品，从列车前进方向${door}侧车门下车。` +
         `${tr.length ? "本站可换乘" + cnTransfer(tr) + "。" : ""}感谢您乘坐合肥轨道交通。`,
-      en: `We are arriving at the terminal station, ${py(to)}. Please take all your belongings ` +
-        `and leave from the ${side} side.${tr.length ? " You can transfer to " + enTransfer(tr) + "." : ""}`,
+      en: [
+        "We are arriving at the terminal station,", stn(to),
+        `. Please take all your belongings and leave from the ${side} side.`, ...enTransferPart(tr),
+      ],
     };
   }
   return {
     zh: `${to}到了，请从列车前进方向${door}侧车门下车。${tr.length ? "本站可换乘" + cnTransfer(tr) + "。" : ""}`,
-    en: `We are arriving at ${py(to)}. Please leave from the ${side} side.` +
-      `${tr.length ? " You can transfer to " + enTransfer(tr) + "." : ""}`,
+    en: ["We are arriving at", stn(to), `. Please leave from the ${side} side.`, ...enTransferPart(tr)],
   };
 }
+// 屏幕上显示的英文：站名直接写中文
+const enText = (parts) =>
+  (parts || []).map((x) => (typeof x === "string" ? x : " " + x.zh)).join("").trim();
 
 function parTime(len, vm) {
   return (len / vm + vm / 4 + vm / 6.4) * 1.15 + 3;
@@ -73,7 +82,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
   const [phase, setPhase] = useState("ready");
   const [card, setCard] = useState(null);
   const [hud, setHud] = useState({ kmh: 0, dist: 0, hint: "go", tip: "", limit: null, over: false, off: null });
-  const [banner, setBanner] = useState({ zh: "", en: "" });
+  const [banner, setBanner] = useState({ zh: "", en: null });
   const onboard = results.current.length
     ? results.current[results.current.length - 1].onboard
     : START_PASSENGERS;
@@ -82,7 +91,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
   const seg = trip.segs[segIdx];
 
   function announce({ zh, en }) {
-    setBanner({ zh, en });
+    setBanner({ zh, en: enText(en) });
     speak(zh, en);
   }
 
@@ -128,7 +137,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
     setCard(r);
     if (missed) {
       sfx.miss();
-      announce({ zh: `哎呀，列车冲过了${seg.to}站！下次记得早一点刹车哦。`, en: "" });
+      announce({ zh: `哎呀，列车冲过了${seg.to}站！下次记得早一点刹车哦。`, en: null });
     } else {
       sfx.chime();
       setTimeout(() => (stars === 3 ? sfx.perfect() : sfx.good()), 900);
