@@ -6,6 +6,14 @@ const ACC = 2.4; // 加速 m/s²
 const BRK = 3.2; // 刹车 m/s²
 const DRAG = 0.12; // 滑行时的阻力
 const TRAIN_LEN = 92;
+// 乘客规则：精准停车上 100 下 30；没停准上 30 下 50；冲过站没人能上车，50 人生气下车
+export const START_PASSENGERS = 100;
+export const RULES = {
+  precise: { board: 100, alight: 30 },
+  rough: { board: 30, alight: 50 },
+  missed: { board: 0, alight: 50 },
+};
+const CAPACITY = 700; // 画车窗里乘客用的满载人数
 const CARS = 4;
 
 const CN_NUM = "零一二三四五六七八九";
@@ -63,7 +71,10 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
   const [card, setCard] = useState(null);
   const [hud, setHud] = useState({ kmh: 0, dist: 0, hint: "go", tip: "", limit: null, over: false, off: null });
   const [banner, setBanner] = useState({ zh: "", en: "" });
-  const total = results.current.reduce((s, r) => s + r.total, 0);
+  const onboard = results.current.length
+    ? results.current[results.current.length - 1].onboard
+    : START_PASSENGERS;
+  const preciseTol = lv.tol * 0.4; // 精准停车范围（米）
 
   const seg = trip.segs[segIdx];
 
@@ -76,7 +87,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
   useEffect(() => {
     g.current = {
       phase: "ready", x: 0, v: 0, t: 0, dwell: 0, over: 0, door: segIdx === 0 ? 0 : 1,
-      warnAt: 0, hudAt: 0, tip: "",
+      warnAt: 0, hudAt: 0, tip: "", load: onboard, boarded: false,
     };
     setPhase("ready");
     setCard(null);
@@ -98,7 +109,16 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
     const bonus = missed ? 0 : Math.round(Math.max(0, Math.min(20, 20 - late * 2)));
     const penalty = Math.min(30, Math.floor(s.over * 4));
     const sum = missed ? 0 : Math.max(0, precision + bonus - penalty);
-    const r = { station: seg.to, err, precision, bonus, penalty, total: sum, stars, title, missed, time: s.t };
+    const kind = missed ? "missed" : abs <= preciseTol ? "precise" : "rough";
+    const before = onboard;
+    const alight = Math.min(before, RULES[kind].alight);
+    const board = RULES[kind].board;
+    const r = {
+      station: seg.to, err, precision, bonus, penalty, total: sum, stars, title, missed, time: s.t,
+      kind, before, alight, board, onboard: before - alight + board,
+    };
+    s.load = r.onboard;
+    s.boarded = !missed;
     results.current.push(r);
     s.phase = "doors";
     setPhase("doors");
@@ -334,11 +354,27 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
             c.fillRect(dx + (dw / 2) * (1 - s.door), wy - 3, dw * s.door, bot - wy - 1);
           }
         });
-        c.fillStyle = "#8fd3ff";
+        // 车窗：乘客越多，窗里的小人头越多
+        const fill = Math.min(1, s.load / CAPACITY);
         [0.05, 0.37, 0.79].forEach((p, j) => {
           const ww = carW * (j === 1 ? 0.21 : 0.11);
           if (isHead && j === 2) return;
-          c.fillRect(cx + carW * p, wy, ww, wh);
+          const wx = cx + carW * p;
+          c.fillStyle = "#8fd3ff";
+          c.fillRect(wx, wy, ww, wh);
+          const hr = Math.max(2.5, wh * 0.16);
+          const slots = Math.max(1, Math.floor(ww / (hr * 2.4)));
+          const n = Math.round(slots * 2 * fill);
+          for (let k = 0; k < n; k++) {
+            const row = k < slots ? 0 : 1;
+            const col = k % slots;
+            const hx = wx + (col + 0.5) * (ww / slots);
+            const hy = wy + wh - hr * (row ? 2.6 : 1.1);
+            c.fillStyle = ["#5d4037", "#212121", "#8d6e63", "#3e2723"][(i + j + k) % 4];
+            c.beginPath();
+            c.arc(hx, hy, hr, 0, 7);
+            c.fill();
+          }
         });
         if (isHead) {
           c.fillStyle = "#22305c";
@@ -375,7 +411,9 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
         c.fillRect(x0, py, x1 - x0, 6);
         c.font = `${Math.min(26, (H - py) * 0.5)}px sans-serif`;
         c.textAlign = "center"; c.textBaseline = "middle";
-        ["🧒", "👧", "👨‍🦱", "👩", "👦", "🧓"].forEach((p, i) =>
+        const crowd = ["🧒", "👧", "👨‍🦱", "👩", "👦", "🧓"];
+        const left = mark === 0 ? 1 : s.boarded ? 1 : crowd.length;
+        crowd.slice(0, left).forEach((p, i) =>
           c.fillText(p, X(mark - 96 + i * 17), py + (H - py) * 0.55));
       });
       const mx = X(seg.len);
@@ -432,7 +470,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
         <span className="badge" style={{ background: line.color }}>{line.name}</span>
         <span className="who">🧑‍✈️ {player}</span>
         <span className="next">下一站：<b>{seg.to}</b></span>
-        <span className="score">得分 <b>{total}</b></span>
+        <span className="score">🧍 车上 <b>{onboard}</b> 人</span>
       </div>
       <div className={"dots" + (trip.names.length > 6 ? " many" : "")}>
         {trip.names.map((n, i) => (
@@ -457,6 +495,8 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
         {hud.off !== null && phase !== "doors" && (
           <div className="aim">
             <div className="zone" style={{ width: `${(lv.tol / 60) * 100}%` }} />
+            <div className="zone precise" style={{ width: `${(preciseTol / 60) * 100}%` }} />
+            <span className="aimlabel">停在亮绿区 = 精准，多上乘客！</span>
             <div className="center" />
             <div className="ptr" style={{ left: `${50 + Math.max(-1, Math.min(1, hud.off / 60)) * 50}%` }}>🚇</div>
           </div>
@@ -474,12 +514,27 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
                 {Math.abs(card.err) > 0.5 && <b>{Math.abs(card.err).toFixed(1)} 米</b>}
               </p>
             )}
+            <div className={"pax " + card.kind}>
+              <div className="pax-tag">
+                {card.kind === "precise" ? "🎯 精准停车" : card.kind === "rough" ? "😅 没停准" : "😡 乘客生气了"}
+              </div>
+              <div className="pax-row">
+                <span>⬇️ 下车 <b>{card.alight}</b> 人</span>
+                <span>⬆️ 上车 <b>{card.board}</b> 人</span>
+              </div>
+              <div className="pax-now">
+                车上 {card.before} → <b>{card.onboard}</b> 人
+                <em className={card.onboard >= card.before ? "up" : "down"}>
+                  {card.onboard >= card.before ? "+" : ""}{card.onboard - card.before}
+                </em>
+              </div>
+            </div>
             <table>
               <tbody>
                 <tr><td>🎯 停车准度</td><td>+{card.precision}</td></tr>
                 <tr><td>⏱ 准点奖励（{card.time.toFixed(0)} 秒）</td><td>+{card.bonus}</td></tr>
                 {card.penalty > 0 && <tr><td>⚠️ 超速扣分</td><td>-{card.penalty}</td></tr>}
-                <tr className="sum"><td>本站得分</td><td>{card.total}</td></tr>
+                <tr className="sum"><td>驾驶分</td><td>{card.total}</td></tr>
               </tbody>
             </table>
             <button className="big go" onClick={next}>{last ? "看成绩 🏁" : "关门发车 ▶"}</button>
