@@ -86,83 +86,105 @@ export default function Home() {
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
-      <button className="mute" onClick={() => setMute(!mute)}>{mute ? "🔇" : "🔊"}</button>
+      <button className="mute" onClick={() => setMute(!mute)} aria-label={mute ? "打开声音" : "关闭声音"}>{mute ? "🔇" : "🔊"}</button>
 
       {screen === "home" && (
-        <div className="page">
-          <h1 className="logo">🚇 地铁冲冲冲！</h1>
-          <p className="sub">当一回地铁小司机：精准停车接乘客，看谁的地铁上人最多！</p>
+        <div className="page home">
+          <header className="hero">
+            <TrainArt />
+            <h1 className="logo">地铁冲冲冲！</h1>
+            <p className="sub">当一回合肥地铁小司机：精准停车接乘客，看谁的车上人最多！</p>
+          </header>
+
+          <h2 className="step-title"><span className="step-no">1</span>选一条线路</h2>
           <div className="lines">
-            {LINES.map((l) => (
-              <button key={l.id} className="line" style={{ background: l.color }}
-                onClick={() => { sfx.unlock(); setLine(l); setScreen("setup"); }}>
-                <b>{l.name}</b>
-                <span>{l.stations[0]} ⇄ {l.stations[l.stations.length - 1]}</span>
-                <em>{LEVELS[l.level].stars} {LEVELS[l.level].label}</em>
-              </button>
-            ))}
+            {LINES.map((l) => {
+              const km = l.dist.reduce((x, y) => x + y, 0) / 1000;
+              return (
+                <button key={l.id} className="line-card" style={{ "--line": l.color }}
+                  onClick={() => { sfx.unlock(); setLine(l); setScreen("setup"); }}>
+                  <span className="lc-num">{l.id}</span>
+                  <span className="lc-body">
+                    <b>{l.name}</b>
+                    <span className="lc-ends">{l.stations[0]} ⇄ {l.stations[l.stations.length - 1]}</span>
+                    <span className="lc-meta">
+                      <em className={"lv lv" + l.level}>{LEVELS[l.level].stars} {LEVELS[l.level].label}</em>
+                      {l.stations.length} 站 · {km.toFixed(1)} 公里
+                    </span>
+                  </span>
+                  <span className="lc-go">▶</span>
+                </button>
+              );
+            })}
           </div>
-          <div className="how">
-            <h3>怎么玩？</h3>
-            <ol>
-              <li>按住 <b>🚀 加速</b> 让列车出发，松开就会慢慢滑行。</li>
-              <li>快到站时按住 <b>🛑 刹车</b>，让车头的 <span className="tri">▼</span> 对准站台上的 <span className="stop">停</span>。</li>
-              <li>从起点站出发时车上有 {START_PASSENGERS} 位乘客。每到一站：
-                <ul className="rules">
-                  <li>🎯 <b>精准停车</b>（停在亮绿区）：上车 {RULES.precise.board} 人，下车 {RULES.precise.alight} 人</li>
-                  <li>😅 <b>没停准</b>：上车 {RULES.rough.board} 人，下车 {RULES.rough.alight} 人</li>
-                  <li>😡 <b>冲过站</b>：没人能上车，{RULES.missed.alight} 人生气下车</li>
-                </ul>
-              </li>
-              <li>跑完全程，<b>车上乘客最多</b>的司机获胜！人数一样时比驾驶分（停车准度 + 准点）。</li>
-              <li>看到圆形限速牌要减速，超速会被扣分哦。</li>
-            </ol>
+
+          <h2 className="step-title"><span className="step-no">2</span>怎么开地铁？</h2>
+          <div className="how-cards">
+            <div className="how-card"><span className="hc-icon go">🚀</span><b>按住加速</b><span>列车出发，松开会慢慢滑行</span></div>
+            <div className="how-card"><span className="hc-icon brake">✋</span><b>按住刹车</b><span>快到站时减速，看信号灯提示</span></div>
+            <div className="how-card"><span className="hc-icon stop">停</span><b>对准停车牌</b><span>绿色箭头 ▼ 对准红色“停”牌</span></div>
+            <div className="how-card"><span className="hc-icon limit">50</span><b>看到限速牌</b><span>要减到牌子上的速度以下</span></div>
           </div>
+
+          <h2 className="step-title"><span className="step-no">3</span>接乘客，比人数</h2>
+          <div className="rule-cards">
+            <div className="rule precise"><b>🎯 精准停车</b><span>上车 {RULES.precise.board} 人</span><span>下车 {RULES.precise.alight} 人</span></div>
+            <div className="rule rough"><b>😅 没停准</b><span>上车 {RULES.rough.board} 人</span><span>下车 {RULES.rough.alight} 人</span></div>
+            <div className="rule missed"><b>😡 冲过站</b><span>没人上车</span><span>下车 {RULES.missed.alight} 人</span></div>
+          </div>
+          <p className="note center-note">出发时车上有 {START_PASSENGERS} 人。跑完全程，<b>车上乘客最多</b>的司机获胜！</p>
         </div>
       )}
 
       {screen === "setup" && line && (
-        <div className="page">
-          <h1 className="logo small">
-            <span className="badge" style={{ background: line.color }}>{line.name}</span>
-            {LEVELS[line.level].stars} {LEVELS[line.level].label}线路
-          </h1>
-          <p className="sub">
-            停车允许误差 ±{LEVELS[line.level].tol} 米 · 最高时速 {LEVELS[line.level].vmax} km/h
-            {LEVELS[line.level].limit ? " · 有限速区" : ""}{LEVELS[line.level].hint ? " · 有刹车提示灯" : " · 没有刹车提示"}
-          </p>
-          <div className="panel">
-            <h3>玩法</h3>
-            <div className="seg">
-              <button className={!pk ? "on" : ""} onClick={() => setPk(false)}>🧑‍✈️ 单人挑战</button>
-              <button className={pk ? "on" : ""} onClick={() => setPk(true)}>⚔️ 双人对战</button>
+        <div className="page setup" style={{ "--line": line.color }}>
+          <button className="back-btn" onClick={() => setScreen("home")}>← 换条线路</button>
+          <div className="setup-head">
+            <span className="lc-num xl">{line.id}</span>
+            <div>
+              <h1>{line.name}</h1>
+              <p>{line.stations[0]} ⇄ {line.stations[line.stations.length - 1]}</p>
+              <p className="lv-line">
+                <em className={"lv lv" + line.level}>{LEVELS[line.level].stars} {LEVELS[line.level].label}</em>
+                停车误差 ±{LEVELS[line.level].tol} 米
+                {LEVELS[line.level].limit ? " · 有限速区" : ""}{LEVELS[line.level].hint ? " · 有信号灯提示" : " · 没有信号灯提示"}
+              </p>
             </div>
-            <h3>路程</h3>
-            <div className="seg">
+          </div>
+
+          <div className="panel">
+            <h3>几个人玩？</h3>
+            <div className="choice">
+              <button className={!pk ? "on" : ""} onClick={() => setPk(false)}><span>🧑‍✈️</span>一个人挑战</button>
+              <button className={pk ? "on" : ""} onClick={() => setPk(true)}><span>⚔️</span>两个人比赛</button>
+            </div>
+            <h3>开几站？</h3>
+            <div className="choice">
               {LENGTHS.map((o) => (
-                <button key={o.stops} className={stops === o.stops ? "on" : ""} onClick={() => setStops(o.stops)}>{o.label}</button>
+                <button key={o.stops} className={stops === o.stops ? "on" : ""} onClick={() => setStops(o.stops)}>
+                  <span>{o.stops === 3 ? "🚶" : o.stops === 5 ? "🚲" : "🚀"}</span>{o.label}
+                </button>
               ))}
             </div>
-            <h3>司机名字</h3>
+            <h3>司机叫什么名字？</h3>
             <div className="names">
               {players.map((n, i) => (
-                <input key={i} value={n} maxLength={8} placeholder={`司机 ${i + 1}`}
-                  onChange={(e) => setNames(names.map((x, j) => (j === i ? e.target.value : x)))} />
+                <label key={i} className="name-field">
+                  <span>{pk ? `司机 ${i + 1}` : "司机"}</span>
+                  <input id={`driver-${i}`} value={n} maxLength={8} placeholder={`司机 ${i + 1}`}
+                    onChange={(e) => setNames(names.map((x, j) => (j === i ? e.target.value : x)))} />
+                </label>
               ))}
             </div>
-            <p className="note">
-              🎯 精准停车：上 {RULES.precise.board} 下 {RULES.precise.alight} · 😅 没停准：上 {RULES.rough.board} 下 {RULES.rough.alight}
-              · 😡 冲过站：下 {RULES.missed.alight}
-            </p>
             {pk && <p className="note">两位司机轮流开同一段路，最后车上乘客多的获胜！</p>}
-            <button className="big go wide" onClick={start}>出发！🚀</button>
-            <button className="mini back" onClick={() => setScreen("home")}>← 换条线路</button>
+            <button className="big go wide start-btn" onClick={start}>出发！🚇</button>
           </div>
+
           <div className="panel">
             <h3>🏆 {line.name} · {stops} 站排行榜</h3>
             {top.length === 0 ? <p className="note">还没有成绩，快来当第一名！</p> : (
               <ol className="board">
-                {top.map((e, i) => <li key={i}><span>{e.name}</span><b>{e.passengers} 人</b></li>)}
+                {top.map((e, i) => <li key={i}><span className="medal">{["🥇", "🥈", "🥉"][i] || i + 1}</span><span>{e.name}</span><b>{e.passengers} 人</b></li>)}
               </ol>
             )}
           </div>
@@ -175,7 +197,8 @@ export default function Home() {
       )}
 
       {screen === "handover" && (
-        <div className="page center">
+        <div className="page center handover">
+          <div className="big-emoji">🔁</div>
           <h1 className="logo small">{players[turn]} 跑完啦！车上有 {pax(all[turn])} 位乘客</h1>
           <p className="sub">把设备交给下一位司机：<b>{players[turn + 1]}</b></p>
           <button className="big go wide" onClick={() => { setTurn(turn + 1); setScreen("play"); }}>我准备好了！🚀</button>
@@ -183,7 +206,7 @@ export default function Home() {
       )}
 
       {screen === "result" && (
-        <div className="page">
+        <div className="page result">
           <h1 className="logo small">🏁 行程结束</h1>
           {pk && (() => {
             const d = beats(all[0], all[1]);
@@ -213,7 +236,7 @@ export default function Home() {
           <div className="panel">
             <h3>🏆 {line.name} · {stops} 站排行榜</h3>
             <ol className="board">
-              {top.map((e, i) => <li key={i}><span>{e.name}</span><b>{e.passengers} 人</b></li>)}
+              {top.map((e, i) => <li key={i}><span className="medal">{["🥇", "🥈", "🥉"][i] || i + 1}</span><span>{e.name}</span><b>{e.passengers} 人</b></li>)}
             </ol>
           </div>
           <div className="row">
@@ -223,5 +246,30 @@ export default function Home() {
         </div>
       )}
     </div>
+  );
+}
+
+// 首页插画：合肥地铁 B 型车车头
+function TrainArt() {
+  return (
+    <svg className="train-art" viewBox="0 0 320 120" aria-hidden="true">
+      <defs>
+        <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffffff" />
+          <stop offset="1" stopColor="#c9d0da" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="104" width="320" height="6" rx="3" fill="#7d8494" />
+      <path d="M8 22 H232 C270 22 296 46 300 78 V98 H8 Z" fill="url(#steel)" stroke="#8f98a6" strokeWidth="2" />
+      <path d="M238 30 C266 32 286 50 291 72 H238 Z" fill="#1b2638" />
+      <rect x="8" y="42" width="210" height="26" fill="#22314a" />
+      {[0, 1, 2, 3, 4].map((i) => <rect key={i} x={20 + i * 44} y="34" width="20" height="62" fill="#d5dbe4" stroke="#8f98a6" />)}
+      <rect x="8" y="78" width="292" height="8" fill="#e53935" />
+      <rect x="8" y="36" width="230" height="3" fill="#e53935" />
+      <rect x="244" y="24" width="40" height="8" rx="2" fill="#111" />
+      <text x="264" y="30.5" fontSize="6.5" fill="#ffb300" textAnchor="middle" fontWeight="bold">1号线 九联圩</text>
+      <circle cx="292" cy="90" r="3.5" fill="#fffde7" />
+      {[40, 70, 160, 190].map((x) => <circle key={x} cx={x} cy="103" r="7" fill="#1a1d23" />)}
+    </svg>
   );
 }

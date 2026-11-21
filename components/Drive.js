@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { LEVELS, transfersAt } from "../lib/lines";
 import { sfx, speak } from "../lib/sound";
+import { drawScene } from "./scene";
 
 const ACC = 2.4; // 加速 m/s²
 const BRK = 3.2; // 刹车 m/s²
 const DRAG = 0.12; // 滑行时的阻力
-const TRAIN_LEN = 92;
 // 乘客规则：精准停车上 100 下 30；没停准上 30 下 50；冲过站没人能上车，50 人生气下车
 export const START_PASSENGERS = 100;
 export const RULES = {
@@ -13,11 +13,9 @@ export const RULES = {
   rough: { board: 30, alight: 50 },
   missed: { board: 0, alight: 50 },
 };
-const CAPACITY = 700;
 // 真实站间距动辄一两公里，区间中段自动 3 倍速快进（速度表照常显示真实车速），离站台 450 米恢复正常
 const FF_SPEED = 3;
-const FF_UNTIL = 450; // 画车窗里乘客用的满载人数
-const CARS = 4;
+const FF_UNTIL = 450;
 
 const CN_NUM = "零一二三四五六七八九";
 const EN_NUM = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
@@ -260,204 +258,9 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
 
     const draw = () => {
       const s = g.current;
-      const sc = Math.max(2.4, Math.min(6, W / 170)); // 每米多少像素
-      const headX = W * 0.7;
-      const ty = H * 0.74; // 轨道高度
-      const th = Math.max(44, Math.min(96, H * 0.24)); // 车身高度
-      const X = (m) => headX + (m - s.x) * sc;
-
-      // 隧道
-      const bg = c.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, "#0b1030");
-      bg.addColorStop(1, "#1b2452");
-      c.fillStyle = bg;
-      c.fillRect(0, 0, W, H);
-      // 隧道灯（远景，移动得慢一点）
-      const gap = 90;
-      const off = (s.x * sc * 0.6) % gap;
-      for (let px = -off; px < W + gap; px += gap) {
-        c.fillStyle = "rgba(255,230,150,.55)";
-        c.fillRect(px, H * 0.16, 26, 5);
-        c.fillStyle = "rgba(255,255,255,.05)";
-        c.fillRect(px + 40, H * 0.3, 3, ty - H * 0.3);
-      }
-
-      // 车站（背景墙 + 站名牌）
-      [[0, seg.from], [seg.len, seg.to]].forEach(([mark, name]) => {
-        const x0 = X(mark - 108), x1 = X(mark + 14);
-        if (x1 < 0 || x0 > W) return;
-        c.fillStyle = "#e9f1ff";
-        c.fillRect(x0, H * 0.08, x1 - x0, ty - H * 0.08);
-        c.fillStyle = line.color;
-        c.fillRect(x0, H * 0.08, x1 - x0, 8);
-        c.fillRect(x0, ty - th - 26, x1 - x0, 5);
-        for (let m = mark - 96; m < mark + 10; m += 24) {
-          c.fillStyle = "#c9d6ee";
-          c.fillRect(X(m) - 5, H * 0.08 + 8, 10, ty - H * 0.08);
-        }
-        const fs = Math.max(14, Math.min(26, H * 0.06));
-        c.font = `bold ${fs}px sans-serif`;
-        c.textAlign = "center";
-        c.textBaseline = "middle";
-        const tw = c.measureText(name).width + 28;
-        for (let m = mark - 84; m < mark + 10; m += 48) {
-          const cx = X(m + 12), cy = H * 0.08 + 14 + fs;
-          c.fillStyle = "#fff";
-          c.strokeStyle = line.color;
-          c.lineWidth = 3;
-          c.beginPath();
-          c.rect(cx - tw / 2, cy - fs * 0.85, tw, fs * 1.7);
-          c.fill(); c.stroke();
-          c.fillStyle = "#1b2452";
-          c.fillText(name, cx, cy);
-        }
-      });
-
-      // 轨道
-      c.fillStyle = "#39406b";
-      c.fillRect(0, ty, W, H - ty);
-      const so = (s.x * sc) % 22;
-      c.fillStyle = "#565d8a";
-      for (let px = -so; px < W; px += 22) c.fillRect(px, ty + 4, 9, 7);
-      c.fillStyle = "#aab3d8";
-      c.fillRect(0, ty, W, 4);
-
-      // 限速区
-      if (seg.limit) {
-        const a = X(seg.limit.from), b = X(seg.limit.to);
-        if (b > 0 && a < W) {
-          c.fillStyle = "rgba(255,160,0,.75)";
-          c.fillRect(a, ty, b - a, 4);
-          [[a, String(seg.limit.kmh), "#e53935"], [b, "✓", "#43a047"]].forEach(([px, txt, col]) => {
-            c.fillStyle = "#cfd6f5";
-            c.fillRect(px - 2, ty - th - 40, 4, th + 40);
-            c.beginPath();
-            c.arc(px, ty - th - 44, 17, 0, 7);
-            c.fillStyle = "#fff"; c.fill();
-            c.lineWidth = 4; c.strokeStyle = col; c.stroke();
-            c.fillStyle = "#222";
-            c.font = "bold 15px sans-serif";
-            c.textAlign = "center"; c.textBaseline = "middle";
-            c.fillText(txt, px, ty - th - 43);
-          });
-        }
-      }
-
-      // 列车
-      const tx1 = headX, tx0 = headX - TRAIN_LEN * sc;
-      const top = ty - th - 4, bot = ty - 5;
-      const carW = (TRAIN_LEN * sc) / CARS;
-      for (let i = 0; i < CARS; i++) {
-        const cx = tx0 + i * carW;
-        const isHead = i === CARS - 1;
-        c.fillStyle = "#f6f8ff";
-        c.beginPath();
-        const r = isHead ? th * 0.55 : 6;
-        c.moveTo(cx + 2, bot);
-        c.lineTo(cx + 2, top + 6);
-        c.quadraticCurveTo(cx + 2, top, cx + 8, top);
-        c.lineTo(cx + carW - 2 - r, top);
-        c.quadraticCurveTo(cx + carW - 2, top, cx + carW - 2, top + r);
-        c.lineTo(cx + carW - 2, bot);
-        c.closePath();
-        c.fill();
-        c.fillStyle = line.color;
-        c.fillRect(cx + 2, bot - th * 0.26, carW - 4, th * 0.14);
-        // 车窗和车门
-        const wy = top + th * 0.2, wh = th * 0.34;
-        const dw = carW * 0.13;
-        [0.2, 0.62].forEach((p) => {
-          const dx = cx + carW * p;
-          c.fillStyle = "#33406e";
-          c.fillRect(dx, wy - 3, dw, bot - wy - 1);
-          if (s.door > 0) {
-            c.fillStyle = "#ffe9a8";
-            c.fillRect(dx + (dw / 2) * (1 - s.door), wy - 3, dw * s.door, bot - wy - 1);
-          }
-        });
-        // 车窗：乘客越多，窗里的小人头越多
-        const fill = Math.min(1, s.load / CAPACITY);
-        [0.05, 0.37, 0.79].forEach((p, j) => {
-          const ww = carW * (j === 1 ? 0.21 : 0.11);
-          if (isHead && j === 2) return;
-          const wx = cx + carW * p;
-          c.fillStyle = "#8fd3ff";
-          c.fillRect(wx, wy, ww, wh);
-          const hr = Math.max(2.5, wh * 0.16);
-          const slots = Math.max(1, Math.floor(ww / (hr * 2.4)));
-          const n = Math.round(slots * 2 * fill);
-          for (let k = 0; k < n; k++) {
-            const row = k < slots ? 0 : 1;
-            const col = k % slots;
-            const hx = wx + (col + 0.5) * (ww / slots);
-            const hy = wy + wh - hr * (row ? 2.6 : 1.1);
-            c.fillStyle = ["#5d4037", "#212121", "#8d6e63", "#3e2723"][(i + j + k) % 4];
-            c.beginPath();
-            c.arc(hx, hy, hr, 0, 7);
-            c.fill();
-          }
-        });
-        if (isHead) {
-          c.fillStyle = "#22305c";
-          c.beginPath();
-          c.moveTo(cx + carW * 0.8, wy - 2);
-          c.lineTo(cx + carW - 2 - r * 0.55, wy - 2);
-          c.quadraticCurveTo(cx + carW - 5, wy, cx + carW - 5, wy + wh);
-          c.lineTo(cx + carW * 0.8, wy + wh);
-          c.closePath();
-          c.fill();
-          c.fillStyle = "#fff59d";
-          c.beginPath();
-          c.arc(cx + carW - 7, bot - th * 0.13, 4, 0, 7);
-          c.fill();
-        }
-      }
-      // 车轮
-      c.fillStyle = "#1a1f3d";
-      for (let i = 0; i < CARS; i++)
-        [0.18, 0.82].forEach((p) => {
-          c.beginPath();
-          c.arc(tx0 + (i + p) * carW, ty - 3, 5, 0, 7);
-          c.fill();
-        });
-
-      // 前景站台 + 停车标
-      [0, seg.len].forEach((mark) => {
-        const x0 = X(mark - 108), x1 = X(mark + 14);
-        if (x1 < 0 || x0 > W) return;
-        const py = ty + 16;
-        c.fillStyle = "#d7deef";
-        c.fillRect(x0, py, x1 - x0, H - py);
-        c.fillStyle = "#ffd600";
-        c.fillRect(x0, py, x1 - x0, 6);
-        c.font = `${Math.min(26, (H - py) * 0.5)}px sans-serif`;
-        c.textAlign = "center"; c.textBaseline = "middle";
-        const crowd = ["🧒", "👧", "👨‍🦱", "👩", "👦", "🧓"];
-        const left = mark === 0 ? 1 : s.boarded ? 1 : crowd.length;
-        crowd.slice(0, left).forEach((p, i) =>
-          c.fillText(p, X(mark - 96 + i * 17), py + (H - py) * 0.55));
-      });
-      const mx = X(seg.len);
-      if (mx > -40 && mx < W + 40) {
-        c.strokeStyle = "#ff3d71";
-        c.lineWidth = 3;
-        c.setLineDash([7, 6]);
-        c.beginPath(); c.moveTo(mx, top - 34); c.lineTo(mx, ty + 16); c.stroke();
-        c.setLineDash([]);
-        c.fillStyle = "#ff3d71";
-        c.beginPath();
-        c.arc(mx, top - 46, 17, 0, 7);
-        c.fill();
-        c.fillStyle = "#fff";
-        c.font = "bold 18px sans-serif";
-        c.textAlign = "center"; c.textBaseline = "middle";
-        c.fillText("停", mx, top - 45);
-      }
-      // 车头对准标记
-      c.fillStyle = "#00e676";
-      c.beginPath();
-      c.moveTo(tx1 - 2, top - 6); c.lineTo(tx1 - 10, top - 20); c.lineTo(tx1 + 6, top - 20);
-      c.closePath(); c.fill();
+      const lastR = results.current[results.current.length - 1];
+      const doorsOpen = s.phase === "doors" && lastR && !lastR.missed ? s.door : 0;
+      drawScene(c, W, H, s, { seg, line, terminal: trip.terminal, doorsOpen });
     };
 
     const frame = (now) => {
@@ -481,48 +284,102 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
     onContextMenu: (e) => e.preventDefault(),
   });
 
-  const hintText = { go: "🟢 加速前进", slow: "🟡 准备减速", brake: "🔴 快刹车！" }[hud.hint];
   const last = segIdx === trip.segs.length - 1;
+  const lamp = phase === "run" ? hud.hint : phase === "ready" ? "go" : null;
+  const lampText = { go: "加速前进", slow: "准备减速", brake: "快刹车！" }[lamp] || "停稳了";
 
   return (
-    <div className="drive">
-      <div className="topbar">
-        <button className="mini" onClick={onQuit}>✕ 退出</button>
-        <span className="badge" style={{ background: line.color }}>{line.name}</span>
-        <span className="who">🧑‍✈️ {player}</span>
-        <span className="next">下一站：<b>{seg.to}</b></span>
-        <span className="score">🧍 车上 <b>{onboard}</b> 人</span>
+    <div className="drive" style={{ "--line": line.color }}>
+      <div className="hud-top">
+        <button className="round-btn" onClick={onQuit} aria-label="退出">✕</button>
+        <div className="line-chip">
+          <span className="line-num">{line.id}</span>
+          <span className="line-dir">开往<br /><b>{trip.terminal}</b></span>
+        </div>
+        <div className="next-stop">
+          <small>下一站</small>
+          <b>{seg.to}</b>
+        </div>
+        <div className="pax-chip" title="车上乘客">
+          <span className="pax-icon">👥</span>
+          <b>{onboard}</b><small>人</small>
+        </div>
       </div>
-      <div className={"dots" + (trip.names.length > 6 ? " many" : "")}>
+
+      <div className="route">
+        <div className="route-line" />
         {trip.names.map((n, i) => (
-          <span key={i} className={"dot" + (i <= segIdx ? " done" : "") + (i === segIdx + 1 ? " cur" : "")}
-            style={i <= segIdx ? { background: line.color, borderColor: line.color } : i === segIdx + 1 ? { borderColor: line.color } : null}>
-            <i>{n}</i>
-          </span>
+          <div key={i} className={"stop" + (i <= segIdx ? " done" : "") + (i === segIdx + 1 ? " cur" : "")}>
+            <span className="stop-dot">{i === segIdx + 1 ? "🚇" : ""}</span>
+            <span className="stop-name">{n}</span>
+          </div>
         ))}
       </div>
-      <div className="banner">📢 {banner.zh}{banner.en && <small>{banner.en}</small>}</div>
+
+      <div className="pis">
+        <span className="pis-icon">📢</span>
+        <div className="pis-text">
+          <p>{banner.zh}</p>
+          {banner.en && <p className="en">{banner.en}</p>}
+        </div>
+      </div>
 
       <div className="scene" ref={wrapRef}>
         <canvas ref={canvasRef} />
-        <div className="gauges">
-          <div className={"speed" + (hud.over ? " over" : "")}>
-            <b>{hud.kmh}</b><small>km/h</small>
-          </div>
-          <div className="dist">距停车点<br /><b>{hud.dist}</b> 米</div>
-          {hud.limit && <div className={"limit" + (hud.over ? " over" : "")}>{hud.limit}</div>}
-          {lv.hint && phase === "run" && <div className={"hint " + hud.hint}>{hintText}</div>}
-          {hud.ff && phase === "run" && <div className="ff">⏩ 区间快进</div>}
+
+        <div className={"gauge" + (hud.over ? " over" : "")}>
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <path d={arcPath(0, 1)} className="g-track" />
+            {hud.limit && <path d={arcPath(hud.limit / lv.vmax, 1)} className="g-limit" />}
+            <path d={arcPath(0, Math.min(1, hud.kmh / lv.vmax))} className="g-fill" />
+            {[0, 20, 40, 60, 80].map((v) => {
+              const [x, y] = polar(v / lv.vmax, 40);
+              return <text key={v} x={x} y={y} className="g-tick">{v}</text>;
+            })}
+            <line x1="60" y1="60" {...needle(hud.kmh / lv.vmax)} className="g-needle" />
+            <circle cx="60" cy="60" r="6" className="g-hub" />
+          </svg>
+          <div className="g-num"><b>{hud.kmh}</b><small>km/h</small></div>
         </div>
-        {hud.off !== null && phase !== "doors" && (
-          <div className="aim">
-            <div className="zone" style={{ width: `${(lv.tol / 60) * 100}%` }} />
-            <div className="zone precise" style={{ width: `${(preciseTol / 60) * 100}%` }} />
-            <span className="aimlabel">停在亮绿区 = 精准，多上乘客！</span>
-            <div className="center" />
-            <div className="ptr" style={{ left: `${50 + Math.max(-1, Math.min(1, hud.off / 60)) * 50}%` }}>🚇</div>
+
+        {lv.hint && (
+          <div className="signal" aria-label={lampText}>
+            <div className="signal-box">
+              <i className={"l red" + (lamp === "brake" ? " on" : "")} />
+              <i className={"l yellow" + (lamp === "slow" ? " on" : "")} />
+              <i className={"l green" + (lamp === "go" ? " on" : "")} />
+            </div>
+            <span className={"signal-text " + (lamp || "")}>{lampText}</span>
           </div>
         )}
+
+        <div className="badges">
+          {hud.limit && <div className={"limit" + (hud.over ? " over" : "")}><b>{hud.limit}</b></div>}
+          {hud.ff && phase === "run" && <div className="ff">⏩ 快进中</div>}
+        </div>
+
+        {phase !== "doors" && (hud.off !== null ? (
+          <div className="aim">
+            <span className="aim-label">停在<b>亮绿区</b> = 精准，多上乘客！</span>
+            <div className="aim-bar">
+              <div className="zone" style={{ width: `${(lv.tol / 60) * 100}%` }} />
+              <div className="zone precise" style={{ width: `${(preciseTol / 60) * 100}%` }} />
+              <div className="center" />
+              <div className="ptr" style={{ left: `${50 + Math.max(-1, Math.min(1, hud.off / 60)) * 50}%` }} />
+            </div>
+          </div>
+        ) : (
+          <div className="approach">
+            <span className="ap-from">{seg.from}</span>
+            <div className="ap-bar">
+              <div className="ap-fill" style={{ width: `${Math.max(0, Math.min(100, 100 - (hud.dist / seg.len) * 100))}%` }} />
+              <span className="ap-train" style={{ left: `${Math.max(0, Math.min(100, 100 - (hud.dist / seg.len) * 100))}%` }}>🚇</span>
+            </div>
+            <span className="ap-to">{seg.to}</span>
+            <span className="ap-dist">还有 <b>{hud.dist}</b> 米</span>
+          </div>
+        ))}
+
         {hud.tip && phase !== "doors" && <div className="tip">{hud.tip}</div>}
         {phase === "missed" && <div className="tip bad">冲过站啦！紧急刹车中…</div>}
 
@@ -541,8 +398,8 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
                 {card.kind === "precise" ? "🎯 精准停车" : card.kind === "rough" ? "😅 没停准" : "😡 乘客生气了"}
               </div>
               <div className="pax-row">
-                <span>⬇️ 下车 <b>{card.alight}</b> 人</span>
-                <span>⬆️ 上车 <b>{card.board}</b> 人</span>
+                <span>⬇️ 下车 <b>{card.alight}</b></span>
+                <span>⬆️ 上车 <b>{card.board}</b></span>
               </div>
               <div className="pax-now">
                 车上 {card.before} → <b>{card.onboard}</b> 人
@@ -564,10 +421,37 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
         )}
       </div>
 
-      <div className="controls">
-        <button className="big brake" {...hold("brk")}>🛑 刹车<small>↓ / 空格</small></button>
-        <button className="big go" {...hold("acc")}>🚀 加速<small>↑ 键</small></button>
+      <div className="console">
+        <button className="pedal brake" {...hold("brk")}>
+          <span className="pedal-icon">✋</span>
+          <span className="pedal-text">刹车</span>
+          <small>按住减速</small>
+        </button>
+        <div className="console-mid">
+          <span className="driver">🧑‍✈️ {player}</span>
+          <span className="keys">键盘 ↑ 加速 · ↓ 刹车</span>
+        </div>
+        <button className="pedal go" {...hold("acc")}>
+          <span className="pedal-icon">🚀</span>
+          <span className="pedal-text">加速</span>
+          <small>按住前进</small>
+        </button>
       </div>
     </div>
   );
+}
+
+// 速度表：0–1 对应 225°（左下）到 -45°（右下），顺时针扫过 270°
+function polar(f, r) {
+  const a = ((225 - 270 * f) * Math.PI) / 180;
+  return [60 + r * Math.cos(a), 60 - r * Math.sin(a)];
+}
+function arcPath(f0, f1, r = 50) {
+  const [x0, y0] = polar(f0, r), [x1, y1] = polar(f1, r);
+  const large = (f1 - f0) * 270 > 180 ? 1 : 0;
+  return `M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}`;
+}
+function needle(f) {
+  const [x, y] = polar(Math.min(1, f), 44);
+  return { x2: x, y2: y };
 }
