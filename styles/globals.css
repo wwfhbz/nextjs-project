@@ -135,3 +135,21 @@ input { font-family: inherit; -webkit-user-select: text; user-select: text; }
 }
 .banner small { display: block; color: #8fa0d8; font-size: 12px; margin-top: 2px; }
 @media (max-height: 520px) { .banner small { display: none; } }
+
+/* 乘客 */
+.how ul.rules { padding-left: 18px; margin: 2px 0; line-height: 1.8; }
+.aim .zone.precise { background: rgba(105,255,160,.85); }
+.aimlabel { position: absolute; left: 50%; top: -22px; transform: translateX(-50%); white-space: nowrap;
+  font-size: 12px; color: #b9f6ca; background: rgba(10,14,44,.85); padding: 1px 10px; border-radius: 99px; }
+.pax { border-radius: 14px; padding: 8px 10px; margin: 4px 0 10px; background: #eef7ff; }
+.pax.precise { background: #e3fbe9; }
+.pax.rough { background: #fff6dc; }
+.pax.missed { background: #ffe5e5; }
+.pax-tag { font-weight: bold; font-size: 16px; }
+.pax-row { display: flex; justify-content: space-around; font-size: 16px; margin: 4px 0; }
+.pax-row b { font-size: 22px; }
+.pax-now { font-size: 15px; }
+.pax-now b { font-size: 24px; color: #1565c0; }
+.pax-now em { font-style: normal; font-weight: bold; margin-left: 6px; }
+.pax-now em.up { color: #2e9e5b; }
+.pax-now em.down { color: #e53935; }
