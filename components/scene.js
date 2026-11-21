@@ -73,7 +73,7 @@ export function drawScene(c, W, H, s, o) {
   const X = (m) => headX + (m - s.x) * sc;
   const ty = H * 0.82; // 轨面
   // 车高（含车顶设备）像素；限制高度让车厢保持修长
-  const th = clamp(Math.min(H * 0.4, CAR_LEN * sc * (portrait ? 0.75 : 0.5)), 56, 180);
+  const th = clamp(Math.min(H * 0.4, CAR_LEN * sc * (portrait ? 0.95 : 0.5)), 56, 180);
   const vs = th / 3.8; // 每米像素（竖直）
   const bodyBot = ty - 0.95 * vs; // 车体底部（地板）
   const bodyTop = bodyBot - 2.95 * vs; // 车顶
@@ -147,8 +147,10 @@ export function drawScene(c, W, H, s, o) {
     const ads = ["#ffcc80", "#80deea", "#c5e1a5", "#f48fb1", "#b39ddb"];
     let n = 0;
     for (let m = mark - PLATFORM_LEN + 14; m < mark - 4; m += 28, n++) {
-      const x0 = X(m), w = 9 * sc, y0 = H * 0.07 + 0.25 * vs, h = 1.3 * vs;
-      if (x0 > W || x0 + w < 0) continue;
+      const x0 = X(m), w = 9 * sc;
+      const y0 = Math.max(H * 0.07 + 6, bodyTop - 3.4 * vs);
+      const h = Math.min(1.3 * vs, bodyTop - 2.0 * vs - y0);
+      if (x0 > W || x0 + w < 0 || h < 12) continue;
       c.fillStyle = "#fff";
       c.fillRect(x0 - 3, y0 - 3, w + 6, h + 6);
       const ag = c.createLinearGradient(x0, y0, x0 + w, y0 + h);
@@ -169,7 +171,8 @@ export function drawScene(c, W, H, s, o) {
     const tw = c.measureText(name).width + fs * 2.6;
     const gap = Math.max(28, (tw * 1.6) / sc);
     for (let m = mark - PLATFORM_LEN + gap * 0.6; m < mark - 2; m += gap) {
-      const cx = X(m), cy = bodyTop - 0.95 * vs;
+      // 站名牌要高过车头箭头，不能互相遮挡
+      const cx = X(m), cy = Math.min(bodyTop - 1.3 * vs, bodyTop - 0.55 * vs - 22 - fs * 0.85);
       if (cx + tw < 0 || cx - tw > W) continue;
       c.fillStyle = "#1d2433";
       roundRect(c, cx - tw / 2, cy - fs * 0.85, tw, fs * 1.7, 6);
@@ -265,14 +268,23 @@ export function drawScene(c, W, H, s, o) {
     c.fillRect(a, floor, b - a, H - floor);
     c.fillStyle = "#ffd400";
     c.fillRect(a, floor + 0.12 * vs, b - a, Math.max(4, 0.16 * vs));
-    // 候车乘客（停准后上车，只剩一两位）
-    const crowdAll = doorCenters(mark).filter((_, i) => i % 3 === 1);
-    const crowd = mark === 0 || (dest && s.boarded) ? crowdAll.slice(0, 2) : crowdAll;
-    crowd.forEach((m, i) => {
-      const px = X(m);
-      if (px < -30 || px > W + 30) return;
-      person(c, px - 0.7 * sc, H - 4, clamp(vs * 1.7, 30, 80), LOOKS[i % LOOKS.length]);
-      if (i % 2 === 0) person(c, px + 0.8 * sc, H - 2, clamp(vs * 1.3, 24, 62), LOOKS[(i + 3) % LOOKS.length]);
+    // 候车乘客：站在站台门前排队；停准开门后走进车厢，只留一两位
+    const foot = Math.min(H - 4, floor + 0.85 * vs);
+    const big = clamp(vs * 1.5, 30, 92);
+    doorCenters(mark).forEach((m, i) => {
+      if (i % 3 !== 1) return;
+      const n = (i - 1) / 3;
+      let t = 0; // 0 = 在排队，1 = 已上车
+      if (mark === 0) t = n >= 2 ? 1 : 0;
+      else if (dest && s.boarded) t = n >= 2 ? s.boardAnim : 0;
+      if (t >= 1) return;
+      const door = X(m);
+      if (door < -60 || door > W + 60) return;
+      c.globalAlpha = 1 - t * t;
+      const walk = (x0) => x0 + (door - x0) * t;
+      person(c, walk(door - 1.0 * sc - big * 0.15), foot - t * 0.5 * vs, big, LOOKS[n % LOOKS.length]);
+      if (n % 2 === 0) person(c, walk(door + 0.9 * sc + big * 0.15), foot + 2 - t * 0.5 * vs, big * 0.78, LOOKS[(n + 3) % LOOKS.length]);
+      c.globalAlpha = 1;
     });
   });
 
@@ -554,7 +566,7 @@ function drawTrain(c, W, H, s, o) {
   c.fillStyle = "#00e676";
   c.strokeStyle = "#0b3d23";
   c.lineWidth = 2;
-  const ay = bodyTop - 1.0 * vs;
+  const ay = bodyTop - 0.55 * vs - 14;
   c.beginPath();
   c.moveTo(hx, ay + 14); c.lineTo(hx - 10, ay); c.lineTo(hx + 10, ay);
   c.closePath(); c.fill(); c.stroke();

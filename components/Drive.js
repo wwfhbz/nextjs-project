@@ -68,7 +68,7 @@ function parTime(len, vm) {
 }
 
 // 驾驶画面：负责一位小司机的一整趟行程
-export default function Drive({ line, trip, player, onFinish, onQuit }) {
+export default function Drive({ line, trip, player, onFinish, onQuit, muted, onMute }) {
   const lv = LEVELS[line.level];
   const vm = lv.vmax / 3.6;
   const wrapRef = useRef(null);
@@ -97,7 +97,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
   useEffect(() => {
     g.current = {
       phase: "ready", x: 0, v: 0, t: 0, dwell: 0, over: 0, door: segIdx === 0 ? 0 : 1,
-      warnAt: 0, hudAt: 0, tip: "", load: onboard, boarded: false, called: false, ff: false,
+      warnAt: 0, hudAt: 0, tip: "", load: onboard, boarded: false, called: false, ff: false, boardAnim: 0,
     };
     setPhase("ready");
     setCard(null);
@@ -188,6 +188,9 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
     };
     resize();
     window.addEventListener("resize", resize);
+    // 结果面板出现/收起时画面高度会变，跟着重新调整画布
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
+    if (ro) ro.observe(wrapRef.current);
 
     const step = (dt, now) => {
       const s = g.current;
@@ -232,6 +235,8 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
       if (s.phase === "ready") s.door = Math.max(0, s.door - dt * 1.5);
       if (s.phase === "doors" && !results.current[results.current.length - 1].missed)
         s.door = Math.min(1, s.door + dt * 1.5);
+      // 开门后乘客走进车厢
+      if (s.phase === "doors" && s.boarded && s.door > 0.6) s.boardAnim = Math.min(1, s.boardAnim + dt * 0.7);
 
       if (now > s.hudAt) {
         s.hudAt = now + 70;
@@ -273,6 +278,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
+      if (ro) ro.disconnect();
     };
   }, [segIdx]);
 
@@ -288,10 +294,14 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
   const lamp = phase === "run" ? hud.hint : phase === "ready" ? "go" : null;
   const lampText = { go: "加速前进", slow: "准备减速", brake: "快刹车！" }[lamp] || "停稳了";
 
+  const prog = Math.max(0, Math.min(100, 100 - (hud.dist / seg.len) * 100));
+  const status = phase === "missed" ? "冲过站啦！紧急刹车中…" : hud.tip;
+
   return (
     <div className="drive" style={{ "--line": line.color }}>
       <div className="hud-top">
         <button className="round-btn" onClick={onQuit} aria-label="退出">✕</button>
+        <button className="round-btn" onClick={onMute} aria-label={muted ? "打开声音" : "关闭声音"}>{muted ? "🔇" : "🔊"}</button>
         <div className="line-chip">
           <span className="line-num">{line.id}</span>
           <span className="line-dir">开往<br /><b>{trip.terminal}</b></span>
@@ -324,67 +334,79 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
         </div>
       </div>
 
+      {!card && (
+        <div className="dash">
+          <div className={"gauge" + (hud.over ? " over" : "")}>
+            <svg viewBox="0 0 120 120" aria-hidden="true">
+              <path d={arcPath(0, 1)} className="g-track" />
+              {hud.limit && <path d={arcPath(hud.limit / lv.vmax, 1)} className="g-limit" />}
+              <path d={arcPath(0, Math.min(1, hud.kmh / lv.vmax))} className="g-fill" />
+              {[0, 20, 40, 60, 80].map((v) => {
+                const [x, y] = polar(v / lv.vmax, 40);
+                return <text key={v} x={x} y={y} className="g-tick">{v}</text>;
+              })}
+              <line x1="60" y1="60" {...needle(hud.kmh / lv.vmax)} className="g-needle" />
+              <circle cx="60" cy="60" r="6" className="g-hub" />
+            </svg>
+            <div className="g-num"><b>{hud.kmh}</b><small>km/h</small></div>
+          </div>
+
+          {lv.hint ? (
+            <div className="signal" aria-label={lampText}>
+              <div className="signal-box">
+                <i className={"l green" + (lamp === "go" ? " on" : "")} />
+                <i className={"l yellow" + (lamp === "slow" ? " on" : "")} />
+                <i className={"l red" + (lamp === "brake" ? " on" : "")} />
+              </div>
+              <span className={"signal-text " + (lamp || "")}>{lampText}</span>
+            </div>
+          ) : (
+            <div className="signal off"><span className="signal-text">高手模式<br />没有提示灯</span></div>
+          )}
+
+          <div className="panel-mid">
+            {status ? (
+              <div className={"status" + (phase === "missed" ? " bad" : "")}>{status}</div>
+            ) : hud.off !== null ? (
+              <div className="status ok">停在<b>亮绿区</b> = 精准停车，多上乘客！</div>
+            ) : (
+              <div className="status">还有 <b>{hud.dist}</b> 米到 <b>{seg.to}</b></div>
+            )}
+            {hud.off !== null ? (
+              <div className="aim-bar">
+                <div className="zone" style={{ width: `${(lv.tol / 60) * 100}%` }} />
+                <div className="zone precise" style={{ width: `${(preciseTol / 60) * 100}%` }} />
+                <div className="center" />
+                <div className="ptr" style={{ left: `${50 + Math.max(-1, Math.min(1, hud.off / 60)) * 50}%` }} />
+              </div>
+            ) : (
+              <div className="ap-row">
+                <span className="ap-from">{seg.from}</span>
+                <div className="ap-bar">
+                  <div className="ap-fill" style={{ width: `${prog}%` }} />
+                  <span className="ap-train" style={{ left: `${prog}%` }}>🚇</span>
+                </div>
+                <span className="ap-to">{seg.to}</span>
+              </div>
+            )}
+          </div>
+
+          {(hud.limit || (hud.ff && phase === "run")) && (
+            <div className="badges">
+              {hud.limit && <div className={"limit" + (hud.over ? " over" : "")}><b>{hud.limit}</b></div>}
+              {hud.ff && phase === "run" && <div className="ff">⏩ 快进</div>}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="scene" ref={wrapRef}>
         <canvas ref={canvasRef} />
+      </div>
 
-        <div className={"gauge" + (hud.over ? " over" : "")}>
-          <svg viewBox="0 0 120 120" aria-hidden="true">
-            <path d={arcPath(0, 1)} className="g-track" />
-            {hud.limit && <path d={arcPath(hud.limit / lv.vmax, 1)} className="g-limit" />}
-            <path d={arcPath(0, Math.min(1, hud.kmh / lv.vmax))} className="g-fill" />
-            {[0, 20, 40, 60, 80].map((v) => {
-              const [x, y] = polar(v / lv.vmax, 40);
-              return <text key={v} x={x} y={y} className="g-tick">{v}</text>;
-            })}
-            <line x1="60" y1="60" {...needle(hud.kmh / lv.vmax)} className="g-needle" />
-            <circle cx="60" cy="60" r="6" className="g-hub" />
-          </svg>
-          <div className="g-num"><b>{hud.kmh}</b><small>km/h</small></div>
-        </div>
-
-        {lv.hint && (
-          <div className="signal" aria-label={lampText}>
-            <div className="signal-box">
-              <i className={"l red" + (lamp === "brake" ? " on" : "")} />
-              <i className={"l yellow" + (lamp === "slow" ? " on" : "")} />
-              <i className={"l green" + (lamp === "go" ? " on" : "")} />
-            </div>
-            <span className={"signal-text " + (lamp || "")}>{lampText}</span>
-          </div>
-        )}
-
-        <div className="badges">
-          {hud.limit && <div className={"limit" + (hud.over ? " over" : "")}><b>{hud.limit}</b></div>}
-          {hud.ff && phase === "run" && <div className="ff">⏩ 快进中</div>}
-        </div>
-
-        {phase !== "doors" && (hud.off !== null ? (
-          <div className="aim">
-            <span className="aim-label">停在<b>亮绿区</b> = 精准，多上乘客！</span>
-            <div className="aim-bar">
-              <div className="zone" style={{ width: `${(lv.tol / 60) * 100}%` }} />
-              <div className="zone precise" style={{ width: `${(preciseTol / 60) * 100}%` }} />
-              <div className="center" />
-              <div className="ptr" style={{ left: `${50 + Math.max(-1, Math.min(1, hud.off / 60)) * 50}%` }} />
-            </div>
-          </div>
-        ) : (
-          <div className="approach">
-            <span className="ap-from">{seg.from}</span>
-            <div className="ap-bar">
-              <div className="ap-fill" style={{ width: `${Math.max(0, Math.min(100, 100 - (hud.dist / seg.len) * 100))}%` }} />
-              <span className="ap-train" style={{ left: `${Math.max(0, Math.min(100, 100 - (hud.dist / seg.len) * 100))}%` }}>🚇</span>
-            </div>
-            <span className="ap-to">{seg.to}</span>
-            <span className="ap-dist">还有 <b>{hud.dist}</b> 米</span>
-          </div>
-        ))}
-
-        {hud.tip && phase !== "doors" && <div className="tip">{hud.tip}</div>}
-        {phase === "missed" && <div className="tip bad">冲过站啦！紧急刹车中…</div>}
-
-        {card && (
-          <div className="card">
+      {card ? (
+        <div className={"sheet " + card.kind}>
+          <div className="sh-head">
             <h2 className={card.missed ? "bad" : ""}>{card.title}</h2>
             <div className="stars">{"⭐".repeat(card.stars)}{"☆".repeat(3 - card.stars)}</div>
             {!card.missed && (
@@ -393,50 +415,48 @@ export default function Drive({ line, trip, player, onFinish, onQuit }) {
                 {Math.abs(card.err) > 0.5 && <b>{Math.abs(card.err).toFixed(1)} 米</b>}
               </p>
             )}
-            <div className={"pax " + card.kind}>
-              <div className="pax-tag">
-                {card.kind === "precise" ? "🎯 精准停车" : card.kind === "rough" ? "😅 没停准" : "😡 乘客生气了"}
-              </div>
-              <div className="pax-row">
-                <span>⬇️ 下车 <b>{card.alight}</b></span>
-                <span>⬆️ 上车 <b>{card.board}</b></span>
-              </div>
-              <div className="pax-now">
-                车上 {card.before} → <b>{card.onboard}</b> 人
-                <em className={card.onboard >= card.before ? "up" : "down"}>
-                  {card.onboard >= card.before ? "+" : ""}{card.onboard - card.before}
-                </em>
-              </div>
-            </div>
-            <table>
-              <tbody>
-                <tr><td>🎯 停车准度</td><td>+{card.precision}</td></tr>
-                <tr><td>⏱ 准点奖励（{card.time.toFixed(0)} 秒）</td><td>+{card.bonus}</td></tr>
-                {card.penalty > 0 && <tr><td>⚠️ 超速扣分</td><td>-{card.penalty}</td></tr>}
-                <tr className="sum"><td>驾驶分</td><td>{card.total}</td></tr>
-              </tbody>
-            </table>
-            <button className="big go" onClick={next}>{last ? "看成绩 🏁" : "关门发车 ▶"}</button>
           </div>
-        )}
-      </div>
-
-      <div className="console">
-        <button className="pedal brake" {...hold("brk")}>
-          <span className="pedal-icon">✋</span>
-          <span className="pedal-text">刹车</span>
-          <small>按住减速</small>
-        </button>
-        <div className="console-mid">
-          <span className="driver">🧑‍✈️ {player}</span>
-          <span className="keys">键盘 ↑ 加速 · ↓ 刹车</span>
+          <div className="sh-pax">
+            <div className="pax-tag">
+              {card.kind === "precise" ? "🎯 精准停车" : card.kind === "rough" ? "😅 没停准" : "😡 乘客生气了"}
+            </div>
+            <div className="pax-row">
+              <span>⬇️ 下车 <b>{card.alight}</b></span>
+              <span>⬆️ 上车 <b>{card.board}</b></span>
+            </div>
+            <div className="pax-now">
+              车上 {card.before} → <b>{card.onboard}</b> 人
+              <em className={card.onboard >= card.before ? "up" : "down"}>
+                {card.onboard >= card.before ? "+" : ""}{card.onboard - card.before}
+              </em>
+            </div>
+          </div>
+          <div className="sh-score">
+            <span>🎯 停车准度 <b>+{card.precision}</b></span>
+            <span>⏱ 准点 <b>+{card.bonus}</b></span>
+            {card.penalty > 0 && <span>⚠️ 超速 <b>-{card.penalty}</b></span>}
+            <span className="sum">驾驶分 <b>{card.total}</b></span>
+          </div>
+          <button className="big go sh-btn" onClick={next}>{last ? "看成绩 🏁" : "关门发车 ▶"}</button>
         </div>
-        <button className="pedal go" {...hold("acc")}>
-          <span className="pedal-icon">🚀</span>
-          <span className="pedal-text">加速</span>
-          <small>按住前进</small>
-        </button>
-      </div>
+      ) : (
+        <div className="console">
+          <button className="pedal brake" {...hold("brk")}>
+            <span className="pedal-icon">✋</span>
+            <span className="pedal-text">刹车</span>
+            <small>按住减速</small>
+          </button>
+          <div className="console-mid">
+            <span className="driver">🧑‍✈️ {player}</span>
+            <span className="keys">键盘 ↑ 加速 · ↓ 刹车</span>
+          </div>
+          <button className="pedal go" {...hold("acc")}>
+            <span className="pedal-icon">🚀</span>
+            <span className="pedal-text">加速</span>
+            <small>按住前进</small>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

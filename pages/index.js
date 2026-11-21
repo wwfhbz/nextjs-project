@@ -86,7 +86,7 @@ export default function Home() {
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
-      <button className="mute" onClick={() => setMute(!mute)} aria-label={mute ? "打开声音" : "关闭声音"}>{mute ? "🔇" : "🔊"}</button>
+      {screen !== "play" && <button className="mute" onClick={() => setMute(!mute)} aria-label={mute ? "打开声音" : "关闭声音"}>{mute ? "🔇" : "🔊"}</button>}
 
       {screen === "home" && (
         <div className="page home">
@@ -193,7 +193,7 @@ export default function Home() {
 
       {screen === "play" && (
         <Drive key={turn} line={line} trip={trip} player={players[turn] || "小司机"}
-          onFinish={finish} onQuit={() => setScreen("setup")} />
+          onFinish={finish} onQuit={() => setScreen("setup")} muted={mute} onMute={() => setMute(!mute)} />
       )}
 
       {screen === "handover" && (
