@@ -133,3 +133,5 @@ input { font-family: inherit; -webkit-user-select: text; user-select: text; }
   .controls .big { padding: 8px; font-size: 20px; }
   .topbar { padding: 4px 10px; }
 }
+.banner small { display: block; color: #8fa0d8; font-size: 12px; margin-top: 2px; }
+@media (max-height: 520px) { .banner small { display: none; } }
