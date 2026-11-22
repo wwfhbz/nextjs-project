@@ -18,4 +18,5 @@ echo "网站上传完成：$SERVER:$REMOTE_DIR"
 # 排行榜服务：上传后重启（第一次部署请先按 deploy/README.md 第 6 步安装）
 ssh "$SERVER" "mkdir -p /opt/ditie"
 scp server/leaderboard.js "$SERVER:/opt/ditie/leaderboard.js"
+scp lib/rules.js "$SERVER:/opt/ditie/rules.js"   # 接乘客规则，和游戏共用
 ssh "$SERVER" "systemctl restart ditie-leaderboard 2>/dev/null && echo 排行榜服务已重启 || echo 排行榜服务还没安装，见 deploy/README.md 第 6 步"

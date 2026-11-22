@@ -2,17 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { LEVELS, transfersAt } from "../lib/lines";
 import { sfx, speak } from "../lib/sound";
 import { drawScene } from "./scene";
+import { START_PASSENGERS, RULES, stopOutcome, WRONG_DOOR_PENALTY, LATE_BONUS } from "../lib/rules";
 
 const ACC = 2.4; // 加速 m/s²
 const BRK = 3.2; // 刹车 m/s²
 const DRAG = 0.12; // 滑行时的阻力
-// 乘客规则：精准停车上 100 下 30；没停准上 30 下 50；冲过站没人能上车，50 人生气下车
-export const START_PASSENGERS = 100;
-export const RULES = {
-  precise: { board: 100, alight: 30 },
-  rough: { board: 30, alight: 50 },
-  missed: { board: 0, alight: 50 },
-};
+// 乘客规则在 lib/rules.js（和排行榜服务器共用）
+export { START_PASSENGERS, RULES };
+const LATE_CHANCE = 0.4; // 开门后有乘客最后一刻跑来的概率
 // 真实站间距动辄一两公里，区间中段自动 3 倍速快进（速度表照常显示真实车速），离站台 450 米恢复正常
 const FF_SPEED = 3;
 const FF_UNTIL = 450;
@@ -68,7 +65,7 @@ function parTime(len, vm) {
 }
 
 // 驾驶画面：负责一位小司机的一整趟行程
-export default function Drive({ line, trip, player, onFinish, onQuit, muted, onMute }) {
+export default function Drive({ line, trip, player, onFinish, onQuit, muted, onMute, skin }) {
   const lv = LEVELS[line.level];
   const vm = lv.vmax / 3.6;
   const wrapRef = useRef(null);
@@ -81,9 +78,12 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
   const [card, setCard] = useState(null);
   const [hud, setHud] = useState({ kmh: 0, dist: 0, hint: "go", tip: "", limit: null, over: false, off: null });
   const [banner, setBanner] = useState({ zh: "", en: null });
-  const onboard = results.current.length
-    ? results.current[results.current.length - 1].onboard
-    : START_PASSENGERS;
+  const [doorMsg, setDoorMsg] = useState("");
+  const [canClose, setCanClose] = useState(false);
+  const [lateRun, setLateRun] = useState(false);
+  const lastR = results.current[results.current.length - 1];
+  const onboard = lastR ? lastR.onboard : START_PASSENGERS;
+  const combo = lastR ? lastR.combo : 0;
   const preciseTol = lv.tol * 0.4; // 精准停车范围（米）
 
   const seg = trip.segs[segIdx];
@@ -96,16 +96,21 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
   // 每到一个新区间：重置列车，播报下一站
   useEffect(() => {
     g.current = {
-      phase: "ready", x: 0, v: 0, t: 0, dwell: 0, over: 0, door: segIdx === 0 ? 0 : 1,
+      phase: "ready", x: 0, v: 0, t: 0, dwell: 0, over: 0, door: 0,
       warnAt: 0, hudAt: 0, tip: "", load: onboard, boarded: false, called: false, ff: false, boardAnim: 0,
+      pending: null, late: null, lateWill: false,
     };
     setPhase("ready");
     setCard(null);
+    setDoorMsg("");
+    setCanClose(false);
+    setLateRun(false);
     sfx.doorClose();
     announce(departCall(seg.to, trip.terminal, transfersAt(seg.to, line.id), segIdx % 2 === 1));
   }, [segIdx]);
 
-  function judge(missed) {
+  // 第 1 步：列车停稳（或冲过站）——先算停车准度
+  function arrive(missed) {
     const s = g.current;
     const err = s.x - seg.len;
     const abs = Math.abs(err);
@@ -118,48 +123,92 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
     const late = s.t - parTime(seg.len, vm);
     const bonus = missed ? 0 : Math.round(Math.max(0, Math.min(20, 20 - late * 2)));
     const penalty = Math.min(30, Math.floor(s.over * 4));
-    const sum = missed ? 0 : Math.max(0, precision + bonus - penalty);
+    const total = missed ? 0 : Math.max(0, precision + bonus - penalty);
     const kind = missed ? "missed" : abs <= preciseTol ? "precise" : "rough";
-    const before = onboard;
-    const alight = Math.min(before, RULES[kind].alight);
-    const board = RULES[kind].board;
-    const r = {
-      station: seg.to, err, precision, bonus, penalty, total: sum, stars, title, missed, time: s.t,
-      kind, before, alight, board, onboard: before - alight + board,
-    };
-    s.load = r.onboard;
-    s.boarded = !missed;
-    results.current.push(r);
-    s.phase = "doors";
-    setPhase("doors");
-    setCard(r);
+    s.pending = { station: seg.to, err, precision, bonus, penalty, total, stars, title, missed, time: s.t, kind, wrongDoor: false, lateBonus: false };
     if (missed) {
       sfx.miss();
       announce({ zh: `哎呀，列车冲过了${seg.to}站！下次记得早一点刹车哦。`, en: null });
-    } else {
-      sfx.chime();
-      setTimeout(() => (stars === 3 ? sfx.perfect() : sfx.good()), 900);
-      if (!s.called) announce(arriveCall(seg.to, trip.terminal, transfersAt(seg.to, line.id), seg.door));
+      finalize();
+      return;
     }
+    sfx.chime();
+    if (!s.called) announce(arriveCall(seg.to, trip.terminal, transfersAt(seg.to, line.id), seg.door));
+    s.phase = "stopped";
+    setPhase("stopped");
+    setDoorMsg("");
+  }
+
+  // 第 2 步：开门——听广播，开对哪一边
+  function openDoor(side) {
+    const s = g.current;
+    if (s.phase !== "stopped") return;
+    if (side !== seg.door) {
+      s.pending.wrongDoor = true;
+      sfx.miss();
+      setDoorMsg(`开错啦！这边没有站台。再听听广播：从${seg.door}侧车门下车`);
+      return;
+    }
+    sfx.good();
+    s.phase = "open";
+    s.boarded = true;
+    s.lateWill = Math.random() < LATE_CHANCE;
+    setPhase("open");
+    setDoorMsg(s.pending.wrongDoor ? `开对了，不过刚才开错一次，乘客等急了（少上 ${WRONG_DOOR_PENALTY} 人）` : "开对了！乘客正在上下车…");
+  }
+
+  // 第 3 步：关门——乘客上完再关；有人跑过来可以等一等
+  function closeDoor() {
+    const s = g.current;
+    if (s.phase !== "open" || s.boardAnim < 1) return;
+    if (s.late && !s.late.inside) {
+      s.pending.lateBonus = false;
+      setDoorMsg("哎呀，那位乘客没赶上……");
+      s.late = null;
+    } else {
+      s.pending.lateBonus = !!(s.late && s.late.inside);
+    }
+    sfx.doorClose();
+    s.phase = "closing";
+    setPhase("closing");
+    setCanClose(false);
+    setLateRun(false);
+  }
+
+  // 第 4 步：结算这一站
+  function finalize() {
+    const s = g.current;
+    const p = s.pending;
+    const before = onboard;
+    const out = stopOutcome(before, combo, p);
+    const r = { ...p, before, ...out, coins: out.board };
+    s.load = r.onboard;
+    results.current.push(r);
+    s.phase = "done";
+    setPhase("done");
+    setCard(r);
+    if (!p.missed) setTimeout(() => (p.stars === 3 ? sfx.perfect() : sfx.good()), 200);
   }
 
   function next() {
-    if (g.current.phase !== "doors") return;
+    if (g.current.phase !== "done") return;
     if (segIdx === trip.segs.length - 1) onFinish(results.current);
     else setSegIdx(segIdx + 1);
   }
-  const nextRef = useRef(next);
-  nextRef.current = next;
-  const judgeRef = useRef(judge);
-  judgeRef.current = judge;
+  const act = useRef({});
+  act.current = { arrive, openDoor, closeDoor, finalize, next };
 
   // 键盘操作
   useEffect(() => {
     const set = (e, down) => {
       const k = e.key;
-      if (k === "ArrowUp" || k === "ArrowRight" || k === "w" || k === "W") input.current.acc = down;
+      const ph = g.current && g.current.phase;
+      // 停稳后：← / Q 开左门，→ / E 开右门，回车关门 / 发车
+      if (down && ph === "stopped" && (k === "ArrowLeft" || k === "q" || k === "Q")) act.current.openDoor("左");
+      else if (down && ph === "stopped" && (k === "ArrowRight" || k === "e" || k === "E")) act.current.openDoor("右");
+      else if (down && k === "Enter") { if (ph === "open") act.current.closeDoor(); else act.current.next(); }
+      else if (k === "ArrowUp" || k === "ArrowRight" || k === "w" || k === "W") input.current.acc = down;
       else if (k === "ArrowDown" || k === "ArrowLeft" || k === "s" || k === "S" || k === " ") input.current.brk = down;
-      else if (k === "Enter" && down) nextRef.current();
       else return;
       e.preventDefault();
     };
@@ -227,16 +276,34 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
             if (Math.abs(remain) <= lv.tol) {
               s.dwell += dt;
               s.tip = "停稳啦，正在开门…";
-              if (s.dwell > 0.7) judgeRef.current(false);
+              if (s.dwell > 0.7) act.current.arrive(false);
             } else { s.dwell = 0; s.tip = "还没到停车点，继续往前开！"; }
           } else { s.dwell = 0; s.tip = ""; }
-        } else if (s.v === 0) judgeRef.current(true);
+        } else if (s.v === 0) act.current.arrive(true);
       }
-      if (s.phase === "ready") s.door = Math.max(0, s.door - dt * 1.5);
-      if (s.phase === "doors" && !results.current[results.current.length - 1].missed)
+      // 开关门动画、乘客上车、最后一刻跑来的乘客
+      if (s.phase === "open") {
         s.door = Math.min(1, s.door + dt * 1.5);
-      // 开门后乘客走进车厢
-      if (s.phase === "doors" && s.boarded && s.door > 0.6) s.boardAnim = Math.min(1, s.boardAnim + dt * 0.7);
+        if (s.door > 0.6) s.boardAnim = Math.min(1, s.boardAnim + dt * 0.7);
+        if (s.boardAnim >= 1 && s.lateWill && !s.late) {
+          s.late = { t: 0, inside: false };
+          setLateRun(true);
+          setDoorMsg("有位乘客正往这边跑！要不要等等他？");
+        }
+        if (s.late) {
+          s.late.t += dt * 0.45;
+          if (s.late.t >= 1 && !s.late.inside) {
+            s.late.inside = true;
+            setLateRun(false);
+            setDoorMsg(`等到了！又上来 ${LATE_BONUS} 位乘客，可以关门啦`);
+          }
+        }
+        if (s.boardAnim >= 1 && !s.canClose) { s.canClose = true; setCanClose(true); }
+      } else if (s.phase === "closing") {
+        s.door = Math.max(0, s.door - dt * 1.4);
+        if (s.late && s.late.inside) s.late.t += dt * 0.45;
+        if (s.door === 0) act.current.finalize();
+      }
 
       if (now > s.hudAt) {
         s.hudAt = now + 70;
@@ -263,9 +330,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
 
     const draw = () => {
       const s = g.current;
-      const lastR = results.current[results.current.length - 1];
-      const doorsOpen = s.phase === "doors" && lastR && !lastR.missed ? s.door : 0;
-      drawScene(c, W, H, s, { seg, line, terminal: trip.terminal, doorsOpen });
+      drawScene(c, W, H, s, { seg, line, terminal: trip.terminal, doorsOpen: s.door, skin, mirror: seg.door === "左" });
     };
 
     const frame = (now) => {
@@ -295,7 +360,11 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
   const lampText = { go: "加速前进", slow: "准备减速", brake: "快刹车！" }[lamp] || "停稳了";
 
   const prog = Math.max(0, Math.min(100, 100 - (hud.dist / seg.len) * 100));
-  const status = phase === "missed" ? "冲过站啦！紧急刹车中…" : hud.tip;
+  const doorPhase = phase === "stopped" || phase === "open" || phase === "closing";
+  const status = phase === "missed" ? "冲过站啦！紧急刹车中…"
+    : phase === "stopped" ? (doorMsg || "🚪 停稳了！听广播：该开哪一边的车门？")
+    : phase === "open" || phase === "closing" ? doorMsg
+    : hud.tip;
 
   return (
     <div className="drive" style={{ "--line": line.color }}>
@@ -366,7 +435,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
 
           <div className="panel-mid">
             {status ? (
-              <div className={"status" + (phase === "missed" ? " bad" : "")}>{status}</div>
+              <div className={"status" + (phase === "missed" || doorMsg.startsWith("开错") || doorMsg.startsWith("哎呀") ? " bad" : "") + (doorPhase ? " door" : "")}>{status}</div>
             ) : hud.off !== null ? (
               <div className="status ok">停在<b>亮绿区</b> = 精准停车，多上乘客！</div>
             ) : (
@@ -391,8 +460,9 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
             )}
           </div>
 
-          {(hud.limit || (hud.ff && phase === "run")) && (
+          {(hud.limit || (hud.ff && phase === "run") || combo > 0) && (
             <div className="badges">
+              {combo > 0 && <div className="combo">🔥 连击 {combo}</div>}
               {hud.limit && <div className={"limit" + (hud.over ? " over" : "")}><b>{hud.limit}</b></div>}
               {hud.ff && phase === "run" && <div className="ff">⏩ 快进</div>}
             </div>
@@ -424,6 +494,13 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
               <span>⬇️ 下车 <b>{card.alight}</b></span>
               <span>⬆️ 上车 <b>{card.board}</b></span>
             </div>
+            {(card.mult > 1 || card.wrongDoor || card.lateBonus) && (
+              <div className="pax-extra">
+                {card.mult > 1 && <span className="hot">🔥 连击 {card.combo}：上车 ×{card.mult}</span>}
+                {card.wrongDoor && <span className="bad">🚪 开错门 −{WRONG_DOOR_PENALTY}</span>}
+                {card.lateBonus && <span className="good">🏃 等到迟到乘客 +{LATE_BONUS}</span>}
+              </div>
+            )}
             <div className="pax-now">
               车上 {card.before} → <b>{card.onboard}</b> 人
               <em className={card.onboard >= card.before ? "up" : "down"}>
@@ -436,8 +513,24 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
             <span>⏱ 准点 <b>+{card.bonus}</b></span>
             {card.penalty > 0 && <span>⚠️ 超速 <b>-{card.penalty}</b></span>}
             <span className="sum">驾驶分 <b>{card.total}</b></span>
+            {card.coins > 0 && <span className="coins">🪙 金币 <b>+{card.coins}</b></span>}
           </div>
-          <button className="big go sh-btn" onClick={next}>{last ? "看成绩 🏁" : "关门发车 ▶"}</button>
+          <button className="big go sh-btn" onClick={next}>{last ? "看成绩 🏁" : "发车 ▶"}</button>
+        </div>
+      ) : phase === "stopped" ? (
+        <div className="console doors">
+          <button className="door-btn" onClick={() => openDoor("左")}>
+            <span className="door-arrow">◀</span><span>开左门</span><small>列车前进方向的左边</small>
+          </button>
+          <button className="door-btn" onClick={() => openDoor("右")}>
+            <span>开右门</span><span className="door-arrow">▶</span><small>列车前进方向的右边</small>
+          </button>
+        </div>
+      ) : phase === "open" || phase === "closing" ? (
+        <div className="console doors">
+          <button className={"close-btn" + (lateRun ? " wait" : "")} disabled={!canClose || phase === "closing"} onClick={closeDoor}>
+            {phase === "closing" ? "关门中…" : !canClose ? "乘客上下车中…" : lateRun ? "⏳ 有人跑来了…（现在关门他就赶不上）" : "🚪 关门"}
+          </button>
         </div>
       ) : (
         <div className="console">

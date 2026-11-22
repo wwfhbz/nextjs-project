@@ -100,7 +100,7 @@ sudo certbot --nginx -d ditie.gmgnclaw.com
    node -v
    ```
    如果用宝塔面板，也可以在“软件商店 → Node.js 版本管理器”里装。
-2. **上传排行榜程序**：把 `server/leaderboard.js` 传到服务器的 `/opt/ditie/leaderboard.js`。
+2. **上传排行榜程序**：把 `server/leaderboard.js` 和 `lib/rules.js` 两个文件都传到服务器的 `/opt/ditie/` 目录（`rules.js` 是接乘客规则，排行榜用它重新计算人数）。
 3. **设置开机自动运行**：把 `deploy/ditie-leaderboard.service` 的内容放到 `/etc/systemd/system/ditie-leaderboard.service`，然后执行：
    ```bash
    sudo systemctl daemon-reload
@@ -120,6 +120,6 @@ sudo certbot --nginx -d ditie.gmgnclaw.com
 ## 以后更新游戏
 
 - 用了脚本：重新运行 `SERVER=root@你的服务器IP bash deploy/deploy.sh`（网站和排行榜程序会一起更新）。
-- 用了网页上传：重新 `yarn build`，把新的 `out/` 打包上传，再执行第 2 步的解压命令。如果 `server/leaderboard.js` 也改了，重新上传它，然后执行 `sudo systemctl restart ditie-leaderboard`。
+- 用了网页上传：重新 `yarn build`，把新的 `out/` 打包上传，再执行第 2 步的解压命令。如果 `server/leaderboard.js` 或 `lib/rules.js` 改了，重新上传到 `/opt/ditie/`，然后执行 `sudo systemctl restart ditie-leaderboard`。
 
 网页本身设置了不缓存，带哈希的 JS、CSS、字体文件设置了长期缓存，所以更新后刷新一下就能看到新版本。

@@ -10,6 +10,18 @@ const DOOR_W = 1.4; // 车门宽（米）
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+// 左侧开门的站：整个画面左右翻转（列车从右往左开，站台仍在靠近屏幕的一侧 = 列车左侧）。
+// 文字要再翻回来，否则是反的。
+let MIRROR = false;
+function T(c, str, x, y, maxW) {
+  if (!MIRROR) return maxW ? c.fillText(str, x, y, maxW) : c.fillText(str, x, y);
+  c.save();
+  c.translate(x, y);
+  c.scale(-1, 1);
+  if (maxW) c.fillText(str, 0, 0, maxW); else c.fillText(str, 0, 0);
+  c.restore();
+}
+
 function roundRect(c, x, y, w, h, r) {
   r = Math.min(r, w / 2, h / 2);
   c.beginPath();
@@ -64,7 +76,16 @@ const LOOKS = [
 ];
 
 export function drawScene(c, W, H, s, o) {
-  const { seg, line, terminal, doorsOpen } = o;
+  MIRROR = !!o.mirror;
+  c.save();
+  if (MIRROR) { c.translate(W, 0); c.scale(-1, 1); }
+  drawSceneInner(c, W, H, s, o);
+  c.restore();
+  MIRROR = false;
+}
+
+function drawSceneInner(c, W, H, s, o) {
+  const { seg, line, terminal, doorsOpen, skin } = o;
   // 每米像素：横向尽量拉长车厢，接近真实比例
   // 竖屏（手机）时画面更高，放大一些，列车不至于太小
   const portrait = H > W * 0.9;
@@ -183,9 +204,9 @@ export function drawScene(c, W, H, s, o) {
       c.fill();
       c.fillStyle = "#fff";
       c.font = `900 ${fs * 0.72}px sans-serif`;
-      c.fillText(String(line.id), cx - tw / 2 + fs * 0.95, cy + 1);
+      T(c, String(line.id), cx - tw / 2 + fs * 0.95, cy + 1);
       c.font = `900 ${fs}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`;
-      c.fillText(name, cx + fs * 0.5, cy + 1);
+      T(c, name, cx + fs * 0.5, cy + 1);
     }
   });
 
@@ -223,11 +244,11 @@ export function drawScene(c, W, H, s, o) {
       c.fillStyle = "#1d2433";
       c.font = `900 ${r * (txt.length > 2 ? 0.62 : 0.85)}px sans-serif`;
       c.textAlign = "center"; c.textBaseline = "middle";
-      c.fillText(txt, px, cy + 1);
+      T(c, txt, px, cy + 1);
     });
   }
 
-  drawTrain(c, W, H, s, { X, sc, vs, ty, bodyTop, bodyBot, wireY, line, terminal, doorsOpen });
+  drawTrain(c, W, H, s, { X, sc, vs, ty, bodyTop, bodyBot, wireY, line, terminal, doorsOpen, skin });
 
   // ---------- 站台（前景）、站台门、候车乘客 ----------
   atStation.forEach(({ mark, a, b, on }) => {
@@ -236,7 +257,7 @@ export function drawScene(c, W, H, s, o) {
     // 站台门：全高玻璃，门单元与列车车门一一对应
     const psdTop = bodyTop - 0.15 * vs;
     const dest = mark === seg.len;
-    const open = dest ? doorsOpen : s.door;
+    const open = dest ? doorsOpen : 0;
     c.fillStyle = "rgba(190,225,255,.10)";
     c.fillRect(a, psdTop, b - a, floor - psdTop);
     c.fillStyle = "#aeb7c6";
@@ -286,6 +307,32 @@ export function drawScene(c, W, H, s, o) {
       if (n % 2 === 0) person(c, walk(door + 0.9 * sc + big * 0.15), foot + 2 - t * 0.5 * vs, big * 0.78, LOOKS[(n + 3) % LOOKS.length]);
       c.globalAlpha = 1;
     });
+    // 最后一刻跑来的乘客：从站台后面跑向车门
+    if (dest && s.late) {
+      const doors = doorCenters(mark);
+      const target = doors.reduce((best, m) => (Math.abs(X(m) - W * 0.4) < Math.abs(X(best) - W * 0.4) ? m : best), doors[0]);
+      // 从画面边缘外一点点开始跑，手机和电脑上都能马上看到
+      const tx = X(target), sx = tx - Math.max(W * 0.5, 120);
+      const t = Math.min(1, s.late.t);
+      const x = sx + (tx - sx) * t;
+      const bob = Math.abs(Math.sin(s.late.t * 18)) * vs * 0.12;
+      c.globalAlpha = s.late.inside ? Math.max(0, 1 - (s.late.t - 1) * 2) : 1;
+      if (c.globalAlpha > 0) person(c, x, foot - bob - (s.late.inside ? (s.late.t - 1) * 0.5 * vs : 0), big * 0.95, LOOKS[2]);
+      c.globalAlpha = 1;
+      if (!s.late.inside && t < 1) {
+        // 对话气泡：白底深色字，在浅色墙面上也看得清
+        const fsz = clamp(vs * 0.5, 13, 20);
+        c.font = `bold ${fsz}px "PingFang SC","Microsoft YaHei",sans-serif`;
+        c.textAlign = "center"; c.textBaseline = "middle";
+        const bw = fsz * 5, bh = fsz * 1.7, by = foot - big * 1.25;
+        c.fillStyle = "#ef4444";
+        roundRect(c, x - bw / 2, by - bh / 2, bw, bh, bh / 2);
+        c.fill();
+        c.beginPath(); c.moveTo(x - 5, by + bh / 2 - 1); c.lineTo(x + 5, by + bh / 2 - 1); c.lineTo(x, by + bh / 2 + 7); c.closePath(); c.fill();
+        c.fillStyle = "#fff";
+        T(c, "等等我！", x, by + 1);
+      }
+    }
   });
 
   // ---------- 停车标（站台末端） ----------
@@ -307,9 +354,9 @@ export function drawScene(c, W, H, s, o) {
     c.fillStyle = "#fff";
     c.textAlign = "center"; c.textBaseline = "middle";
     c.font = `900 ${w * 0.55}px "PingFang SC","Microsoft YaHei",sans-serif`;
-    c.fillText("停", mx, top - h * 0.6);
+    T(c, "停", mx, top - h * 0.6);
     c.font = `bold ${w * 0.26}px sans-serif`;
-    c.fillText("6节", mx, top - h * 0.18);
+    T(c, "6节", mx, top - h * 0.18);
   }
 }
 
@@ -321,8 +368,10 @@ function drawTrain(c, W, H, s, o) {
   const doorTop = bodyTop + 0.32 * vs;
   const fill = Math.min(1, s.load / 700);
   const doorOpen = Math.max(s.door, doorsOpen || 0);
+  const sk = o.skin || { body: ["#fbfcfd", "#e3e8ee", "#c9d0da", "#aeb6c2"], stripe: null, roof: "#9aa3b1" };
+  const stripeCol = sk.stripe && sk.stripe !== "rainbow" ? sk.stripe : line.color;
 
-  for (let i = CARS - 1; i >= 0; i--) {
+  for (let i = o.onlyFront ? 0 : CARS - 1; i >= 0; i--) {
     const x1 = X(s.x - i * CAR_LEN), x0 = x1 - carW;
     if (x1 < -carW || x0 > W + carW) continue;
     const front = i === 0, rear = i === CARS - 1;
@@ -357,16 +406,16 @@ function drawTrain(c, W, H, s, o) {
     }
     c.closePath();
     const steel = c.createLinearGradient(0, bodyTop, 0, bodyBot);
-    steel.addColorStop(0, "#fbfcfd");
-    steel.addColorStop(0.45, "#e3e8ee");
-    steel.addColorStop(0.8, "#c9d0da");
-    steel.addColorStop(1, "#aeb6c2");
+    steel.addColorStop(0, sk.body[0]);
+    steel.addColorStop(0.45, sk.body[1]);
+    steel.addColorStop(0.8, sk.body[2]);
+    steel.addColorStop(1, sk.body[3]);
     c.fillStyle = steel;
     c.fill();
     c.clip();
 
     // 车顶
-    c.fillStyle = "#9aa3b1";
+    c.fillStyle = sk.roof;
     c.fillRect(x0, bodyTop, carW, 0.22 * vs);
     // 车窗：每两扇门之间一组大窗，乘客在窗里
     const half = (DOOR_W / 2) * sc;
@@ -418,10 +467,18 @@ function drawTrain(c, W, H, s, o) {
     c.lineWidth = 1.5;
     wins.forEach(([a, b]) => { roundRect(c, a, winTop, b - a, winBot - winTop, 0.12 * vs); c.stroke(); });
 
-    // 线路色涂装
-    c.fillStyle = line.color;
-    c.fillRect(x0, winBot + 0.22 * vs, carW, 0.34 * vs);
+    // 线路色涂装（或涂装自己的腰带色）
+    if (sk.stripe === "rainbow") {
+      const bands = ["#ef4444", "#f97316", "#facc15", "#22c55e", "#3b82f6", "#8b5cf6"];
+      const bh = (0.42 * vs) / bands.length;
+      bands.forEach((col, k) => { c.fillStyle = col; c.fillRect(x0, winBot + 0.18 * vs + k * bh, carW, bh + 0.5); });
+    } else {
+      c.fillStyle = stripeCol;
+      c.fillRect(x0, winBot + 0.22 * vs, carW, 0.34 * vs);
+    }
+    c.fillStyle = stripeCol;
     c.fillRect(x0, winTop - 0.16 * vs, carW, 0.07 * vs);
+    drawDeco(c, sk.deco, { x0, carW, i, bodyTop, bodyBot, winTop, winBot, vs, sc, front, rear, nose, R, L, t: s.x });
 
     // 车门（双开塞拉门）
     DOOR_POS.forEach((f) => {
@@ -475,8 +532,8 @@ function drawTrain(c, W, H, s, o) {
       c.beginPath();
       c.ellipse(ex - dir * 0.25 * sc, ly, Math.max(2.5, 0.12 * sc), Math.max(3, 0.11 * vs), 0, 0, 7);
       c.fill();
-      // 车头下方线路色裙板
-      c.fillStyle = line.color;
+      // 车头下方裙板
+      c.fillStyle = stripeCol;
       c.fillRect(Math.min(ex, ex - dir * nose * 1.3), bodyBot - 0.3 * vs, nose * 1.3, 0.3 * vs);
     };
     if (front) drawCab(1);
@@ -544,7 +601,7 @@ function drawTrain(c, W, H, s, o) {
       c.fillStyle = "#ffb300";
       c.font = `bold ${Math.max(9, ledH * 0.75)}px "PingFang SC","Microsoft YaHei",sans-serif`;
       c.textAlign = "center"; c.textBaseline = "middle";
-      c.fillText(`${line.id}号线 ${terminal}`, lx - ledW / 2, ly + ledH / 2 + 1, ledW - 6);
+      T(c, `${line.id}号线 ${terminal}`, lx - ledW / 2, ly + ledH / 2 + 1, ledW - 6);
       if (s.v > 0.3) {
         const beam = c.createLinearGradient(ex, 0, ex + 14 * sc, 0);
         beam.addColorStop(0, "rgba(255,250,210,.35)");
@@ -570,4 +627,63 @@ function drawTrain(c, W, H, s, o) {
   c.beginPath();
   c.moveTo(hx, ay + 14); c.lineTo(hx - 10, ay); c.lineTo(hx + 10, ay);
   c.closePath(); c.fill(); c.stroke();
+}
+
+// 涂装装饰（在车体裁剪区域内画）
+function drawDeco(c, deco, d) {
+  if (!deco) return;
+  const { x0, carW, i, bodyTop, bodyBot, winTop, winBot, vs, sc, front, R } = d;
+  if (deco === "stars") {
+    for (let k = 0; k < 26; k++) {
+      const x = x0 + carW * ((k * 0.381 + i * 0.17) % 1);
+      const y = bodyTop + (bodyBot - bodyTop) * ((k * 0.613 + i * 0.29) % 1);
+      if (y > winTop - 2 && y < winBot + 2) continue;
+      const r = k % 5 === 0 ? 2.4 : 1.3;
+      c.fillStyle = k % 7 === 0 ? "#ffd54f" : "#ffffff";
+      c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+    }
+  } else if (deco === "panda") {
+    c.fillStyle = "#1d1d1d";
+    [0.26, 0.74].forEach((f) => {
+      c.beginPath();
+      c.ellipse(x0 + carW * f, bodyBot - 0.25 * vs, carW * 0.08, 0.3 * vs, 0, 0, 7);
+      c.fill();
+    });
+    if (front) {
+      // 熊猫眼圈和耳朵
+      c.beginPath(); c.ellipse(R - 0.9 * sc, bodyTop + 0.55 * vs, 0.35 * sc, 0.22 * vs, -0.4, 0, 7); c.fill();
+      c.beginPath(); c.arc(R - 1.8 * sc, bodyTop + 0.02 * vs, 0.22 * vs, 0, 7); c.fill();
+    }
+  } else if (deco === "fu") {
+    const cx = x0 + carW * 0.5, cy = (bodyTop + winTop) / 2 + 0.05 * vs, r = Math.max(6, 0.22 * vs);
+    c.save();
+    c.translate(cx, cy); c.rotate(Math.PI / 4);
+    c.fillStyle = "#ffd54f"; c.fillRect(-r, -r, r * 2, r * 2);
+    c.restore();
+    c.fillStyle = "#c62828";
+    c.font = `900 ${r * 1.3}px "PingFang SC","Microsoft YaHei",sans-serif`;
+    c.textAlign = "center"; c.textBaseline = "middle";
+    T(c, "福", cx, cy + 1);
+  } else if (deco === "fish") {
+    for (let k = 0; k < 3; k++) {
+      const fx = x0 + carW * (0.2 + k * 0.3), fy = bodyBot - (0.35 + (k % 2) * 0.2) * vs, fr = 0.18 * vs;
+      c.fillStyle = ["#ffb74d", "#fff176", "#f48fb1"][(k + i) % 3];
+      c.beginPath(); c.ellipse(fx, fy, fr * 1.5, fr, 0, 0, 7); c.fill();
+      c.beginPath(); c.moveTo(fx - fr * 1.3, fy); c.lineTo(fx - fr * 2.4, fy - fr); c.lineTo(fx - fr * 2.4, fy + fr); c.closePath(); c.fill();
+      c.fillStyle = "#1d2a4d"; c.beginPath(); c.arc(fx + fr * 0.8, fy - fr * 0.2, fr * 0.18, 0, 7); c.fill();
+    }
+  } else if (deco === "rainbow") {
+    c.fillStyle = "rgba(255,255,255,.0)";
+  }
+}
+
+// 车库里的涂装预览：画一节车头
+export function drawTrainPreview(c, W, H, skin, line) {
+  c.clearRect(0, 0, W, H);
+  const sc = W / (CAR_LEN * 1.15), vs = H / 4.6;
+  const ty = H - 0.15 * vs, bodyBot = ty - 0.95 * vs, bodyTop = bodyBot - 2.95 * vs;
+  const s = { x: CAR_LEN, v: 0, door: 0, load: 260 };
+  const X = (m) => W * 0.04 + m * sc;
+  c.fillStyle = "#c9ced8"; c.fillRect(0, ty - 2, W, 4);
+  drawTrain(c, W, H, s, { X, sc, vs, ty, bodyTop, bodyBot, wireY: bodyTop - 0.6 * vs, line, terminal: "终点站", doorsOpen: 0, skin, onlyFront: true });
 }
