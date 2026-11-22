@@ -13,4 +13,9 @@ yarn build                      # 生成 out/ 目录
 ssh "$SERVER" "mkdir -p '$REMOTE_DIR'"
 # --delete：删掉服务器上旧版本留下的文件
 rsync -az --delete out/ "$SERVER:$REMOTE_DIR/"
-echo "上传完成：$SERVER:$REMOTE_DIR"
+echo "网站上传完成：$SERVER:$REMOTE_DIR"
+
+# 排行榜服务：上传后重启（第一次部署请先按 deploy/README.md 第 6 步安装）
+ssh "$SERVER" "mkdir -p /opt/ditie"
+scp server/leaderboard.js "$SERVER:/opt/ditie/leaderboard.js"
+ssh "$SERVER" "systemctl restart ditie-leaderboard 2>/dev/null && echo 排行榜服务已重启 || echo 排行榜服务还没安装，见 deploy/README.md 第 6 步"

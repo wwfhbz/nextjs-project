@@ -5,6 +5,7 @@ import { LINES, LEVELS, buildTrip } from "../lib/lines";
 import { setMuted, sfx } from "../lib/sound";
 import { ACHIEVEMENTS, dailyPlan, loadProgress, recordTrip, todayKey } from "../lib/progress";
 import { makePoster } from "../lib/poster";
+import { apiEnabled, fetchDaily, submitDaily } from "../lib/api";
 
 const LENGTHS = [
   { stops: 3, label: "短途 3 站" },
@@ -54,11 +55,15 @@ export default function Home() {
   const [poster, setPoster] = useState(null);
   const [posterBusy, setPosterBusy] = useState(false);
   const [today, setToday] = useState(null);
+  const [globalTop, setGlobalTop] = useState(null); // 今日挑战全网排行
+  const [myRanks, setMyRanks] = useState({}); // { 玩家序号: { rank, total } }
 
   useEffect(() => {
     setBoard(loadBoard());
     setProgress(loadProgress());
-    setToday(dailyPlan(todayKey()));
+    const plan = dailyPlan(todayKey());
+    setToday(plan);
+    fetchDaily(plan.key, 10).then(setGlobalTop);
   }, []);
   useEffect(() => setMuted(mute), [mute]);
 
@@ -77,6 +82,7 @@ export default function Home() {
       setTrip(buildTrip(line, startIndex, dir, stops));
     }
     setFresh([]);
+    setMyRanks({});
     setAll([]);
     setTurn(0);
     setScreen("play");
@@ -88,6 +94,13 @@ export default function Home() {
     const got = recordTrip(line, trip, results, daily && daily.key, players[turn] || "小司机");
     if (got.length) setFresh((f) => [...f, ...got]);
     setProgress(loadProgress());
+    if (daily) {
+      const who = turn;
+      submitDaily(daily.key, { name: players[who] || "小司机", results, player: who }).then((r) => {
+        if (r) setMyRanks((m) => ({ ...m, [who]: r }));
+        fetchDaily(daily.key, 10).then(setGlobalTop);
+      });
+    }
     setBoard(saveScore(boardId, {
       name: players[turn] || "小司机", passengers: pax(results), score: sum(results),
       date: new Date().toLocaleDateString(),
@@ -115,7 +128,10 @@ export default function Home() {
     setPosterBusy(true);
     try {
       const rs = all[p];
-      setPoster(await makePoster({ line, trip, name: players[p] || "小司机", results: rs, title: rankTitle(rs), dailyKey: daily && daily.key }));
+      setPoster(await makePoster({
+        line, trip, name: players[p] || "小司机", results: rs, title: rankTitle(rs),
+        dailyKey: daily && daily.key, rank: myRanks[p],
+      }));
     } finally {
       setPosterBusy(false);
     }
@@ -152,6 +168,9 @@ export default function Home() {
                   {buildTrip(today.line, today.startIndex, today.dir, today.stops).names[today.stops]} · {today.stops} 站
                 </span>
                 <span className="dc-best">{myDaily ? `今天最好：${myDaily.passengers} 人` : "每天一题，和同学比比谁接的人多！"}</span>
+                {globalTop && globalTop.total > 0 && (
+                  <span className="dc-global">🌏 今天全城 {globalTop.total} 位司机参加 · 第一名 {globalTop.top[0].name} {globalTop.top[0].passengers} 人</span>
+                )}
               </button>
               <button className="album-card" onClick={() => setScreen("album")}>
                 <span className="dc-tag">📖 集站手册</span>
@@ -252,10 +271,12 @@ export default function Home() {
                 </label>
               ))}
             </div>
+            {daily && apiEnabled() && <p className="note">🌏 今日挑战的成绩会上全城排行榜，名字请用昵称，不要写真实姓名哦。</p>}
             {pk && <p className="note">两位司机轮流开同一段路，最后车上乘客多的获胜！</p>}
             <button className="big go wide start-btn" onClick={start}>出发！🚇</button>
           </div>
 
+          {daily && globalTop && <GlobalBoard data={globalTop} />}
           <div className="panel">
             <h3>🏆 {daily ? `今日挑战 ${daily.key}` : `${line.name} · ${stops} 站`} 本机排行榜</h3>
             {top.length === 0 ? <p className="note">还没有成绩，快来当第一名！</p> : (
@@ -302,6 +323,9 @@ export default function Home() {
                 <h3>{players[p]} <span className="title">{rankTitle(rs)}</span></h3>
                 <div className="totalscore">{pax(rs)}<small> 位乘客</small></div>
                 <p className="note">驾驶分 {sum(rs)} · 精准停车 {rs.filter((r) => r.kind === "precise").length}/{rs.length} 站</p>
+                {daily && myRanks[p] && (
+                  <p className="global-rank">🌏 全城第 <b>{myRanks[p].rank}</b> 名（今天共 {myRanks[p].total} 位司机）</p>
+                )}
                 <button className="big share-btn" disabled={posterBusy} onClick={() => share(p)}>📸 生成分享海报</button>
                 <table className="detail">
                   <tbody>
@@ -318,6 +342,7 @@ export default function Home() {
               </div>
             ))}
           </div>
+          {daily && globalTop && <GlobalBoard data={globalTop} />}
           <div className="panel">
             <h3>🏆 {daily ? `今日挑战 ${daily.key}` : `${line.name} · ${stops} 站`} 本机排行榜</h3>
             <ol className="board">
@@ -407,6 +432,25 @@ function Badge({ a, on }) {
       <span className="badge-icon" style={a.color && on ? { background: a.color, color: "#fff" } : null}>{on ? a.icon : "🔒"}</span>
       <b>{a.name}</b>
       <small>{a.desc}</small>
+    </div>
+  );
+}
+
+function GlobalBoard({ data }) {
+  return (
+    <div className="panel global-board">
+      <h3>🌏 今日全城排行榜 <small>共 {data.total} 位司机</small></h3>
+      {data.top.length === 0 ? <p className="note">今天还没有人上榜，快来当第一名！</p> : (
+        <ol className="board">
+          {data.top.map((e) => (
+            <li key={e.rank}>
+              <span className="medal">{["🥇", "🥈", "🥉"][e.rank - 1] || e.rank}</span>
+              <span>{e.name}</span>
+              <b>{e.passengers} 人</b>
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }

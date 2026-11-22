@@ -2,7 +2,9 @@
 
 目标：在已有的轻量应用服务器上，用子域名 **ditie.gmgnclaw.com** 打开游戏，不影响服务器上已有的两个游戏。
 
-游戏是纯静态网站（`yarn build` 后的 `out/` 目录，约 3 MB）。不需要 Node.js、数据库，也不需要后台进程，Nginx 直接提供文件就行。字体、脚本全部打包在网站里，不依赖 Google 等境外资源。
+游戏本身是纯静态网站（`yarn build` 后的 `out/` 目录，约 3 MB），Nginx 直接提供文件就行。字体、脚本全部打包在网站里，不依赖 Google 等境外资源。
+
+“每日挑战全城排行榜”需要一个小后端（`server/leaderboard.js`，见第 6 步）。它只用 Node.js 自带功能，不需要数据库，也不用安装任何依赖。没装后端时，游戏照样能玩，只是不显示全城排行。
 
 ---
 
@@ -87,9 +89,37 @@ sudo apt-get install -y certbot python3-certbot-nginx   # CentOS 用 yum
 sudo certbot --nginx -d ditie.gmgnclaw.com
 ```
 
+## 第 6 步：开启全城排行榜（每日挑战）
+
+1. **安装 Node.js 18 或更高版本**（服务器上执行 `node -v` 能看到 v18 以上就跳过）：
+   ```bash
+   # 适用于 x86_64 服务器（Ubuntu / Debian / CentOS 都可以）
+   # 国内镜像（npmmirror），下载失败就换成 https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-x64.tar.xz
+   curl -fsSL https://registry.npmmirror.com/-/binary/node/v20.18.0/node-v20.18.0-linux-x64.tar.xz -o /tmp/node.tar.xz
+   sudo tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+   node -v
+   ```
+   如果用宝塔面板，也可以在“软件商店 → Node.js 版本管理器”里装。
+2. **上传排行榜程序**：把 `server/leaderboard.js` 传到服务器的 `/opt/ditie/leaderboard.js`。
+3. **设置开机自动运行**：把 `deploy/ditie-leaderboard.service` 的内容放到 `/etc/systemd/system/ditie-leaderboard.service`，然后执行：
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now ditie-leaderboard
+   curl http://127.0.0.1:3210/api/health      # 能看到 {"ok":true,...} 就是启动成功
+   ```
+4. **Nginx 转发 `/api/`**：新版 `nginx-ditie.conf` 里已经加了 `location /api/`，用新文件替换后执行 `sudo nginx -t && sudo systemctl reload nginx`。
+   - 宝塔面板：在站点的“反向代理”里添加，代理目录填 `/api/`，目标 URL 填 `http://127.0.0.1:3210`。
+5. 浏览器打开 `http://ditie.gmgnclaw.com/api/health`，能看到 `{"ok":true,...}` 就全部完成了。之后首页的“今日挑战”卡片会显示全城参加人数和第一名。
+
+说明：
+- 成绩存放在 `/var/lib/ditie/daily-日期.json`，只保留最近 30 天。
+- 只接受当天的每日挑战成绩，乘客人数由服务器按每站的停车结果重新计算，前端改数字刷分没有用。
+- 同一台设备每天只保留最好的一次；每个 IP 每小时最多提交 60 次；名字最多 8 个字，并做了简单的不文明用语过滤。
+- 查看服务日志：`sudo journalctl -u ditie-leaderboard -n 50`。
+
 ## 以后更新游戏
 
-- 用了脚本：重新运行 `SERVER=root@你的服务器IP bash deploy/deploy.sh`。
-- 用了网页上传：重新 `yarn build`，把新的 `out/` 打包上传，再执行第 2 步的解压命令。
+- 用了脚本：重新运行 `SERVER=root@你的服务器IP bash deploy/deploy.sh`（网站和排行榜程序会一起更新）。
+- 用了网页上传：重新 `yarn build`，把新的 `out/` 打包上传，再执行第 2 步的解压命令。如果 `server/leaderboard.js` 也改了，重新上传它，然后执行 `sudo systemctl restart ditie-leaderboard`。
 
 网页本身设置了不缓存，带哈希的 JS、CSS、字体文件设置了长期缓存，所以更新后刷新一下就能看到新版本。

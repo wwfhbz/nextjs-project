@@ -392,3 +392,10 @@ input { font-family: inherit; -webkit-user-select: text; user-select: text; }
 .poster-tip { margin: 2px 0 10px; font-size: 15px; }
 .poster-box .row { margin-top: 12px; }
 .poster-box a.big { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+
+/* ---------- 全网排行榜 ---------- */
+.dc-global { font-size: 13px; opacity: .95; overflow-wrap: anywhere; }
+.global-board { border: 4px solid #60a5fa; }
+.global-board h3 small { font-size: 13px; color: var(--ink2); font-weight: normal; margin-left: 6px; }
+.global-rank { margin: 6px 0 0; font-size: 16px; background: #eef6ff; border-radius: 12px; padding: 6px 10px; }
+.global-rank b { font-size: 22px; color: #1d4ed8; }
