@@ -1,9 +1,12 @@
 import Head from "next/head";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Drive, { RULES, START_PASSENGERS } from "../components/Drive";
 import { LINES, LEVELS, buildTrip } from "../lib/lines";
 import { setMuted, sfx } from "../lib/sound";
-import { ACHIEVEMENTS, dailyPlan, loadProgress, recordTrip, todayKey } from "../lib/progress";
+import { ACHIEVEMENTS, buySkin, dailyPlan, loadProgress, recordTrip, todayKey, equipSkin } from "../lib/progress";
+import { SKINS, skinById } from "../lib/skins";
+import { COMBO, LATE_BONUS, simulate, WRONG_DOOR_PENALTY } from "../lib/rules";
+import { drawTrainPreview } from "../components/scene";
 import { makePoster } from "../lib/poster";
 import { apiEnabled, fetchDaily, submitDaily } from "../lib/api";
 
@@ -25,9 +28,10 @@ function saveScore(id, entry) {
   try { localStorage.setItem(KEY, JSON.stringify(b)); } catch (e) {}
   return b;
 }
-const best = RULES.precise.board - RULES.precise.alight; // 每站最多净增人数
+// 称号：和“每站都精准停车”的满分人数比
 function rankTitle(rs) {
-  const ratio = (pax(rs) - START_PASSENGERS) / (best * rs.length);
+  const top = simulate(rs.map(() => ({ kind: "precise" })));
+  const ratio = (pax(rs) - START_PASSENGERS) / (top - START_PASSENGERS);
   if (ratio >= 0.9) return "👑 王牌司机";
   if (ratio >= 0.6) return "🥇 金牌司机";
   if (ratio >= 0.3) return "🚇 正式司机";
@@ -159,7 +163,7 @@ export default function Home() {
           </header>
 
           {today && (
-            <div className="quick">
+            <div className="quick three">
               <button className="daily-card" style={{ "--line": today.line.color }} onClick={openDaily}>
                 <span className="dc-tag">📅 今日挑战</span>
                 <b>{today.line.name}</b>
@@ -177,6 +181,12 @@ export default function Home() {
                 <b>{visitedCount} / {totalStations}</b>
                 <span className="dc-route">已点亮的车站</span>
                 <span className="dc-best">🏅 成就 {progress ? progress.unlocked.length : 0} / {ACHIEVEMENTS.length}</span>
+              </button>
+              <button className="album-card garage-card" onClick={() => setScreen("garage")}>
+                <span className="dc-tag">🎨 车库</span>
+                <b>🪙 {progress ? progress.coins : 0}</b>
+                <span className="dc-route">金币换车身涂装</span>
+                <span className="dc-best">正在用：{skinById(progress && progress.skin).name}</span>
               </button>
             </div>
           )}
@@ -208,6 +218,7 @@ export default function Home() {
             <div className="how-card"><span className="hc-icon go">🚀</span><b>按住加速</b><span>列车出发，松开会慢慢滑行</span></div>
             <div className="how-card"><span className="hc-icon brake">✋</span><b>按住刹车</b><span>快到站时减速，看信号灯提示</span></div>
             <div className="how-card"><span className="hc-icon stop">停</span><b>对准停车牌</b><span>绿色箭头 ▼ 对准红色“停”牌</span></div>
+            <div className="how-card"><span className="hc-icon door">🚪</span><b>听广播开车门</b><span>“请从左侧车门下车”就按开左门；乘客上完再关门</span></div>
             <div className="how-card"><span className="hc-icon limit">50</span><b>看到限速牌</b><span>要减到牌子上的速度以下</span></div>
           </div>
 
@@ -217,7 +228,12 @@ export default function Home() {
             <div className="rule rough"><b>😅 没停准</b><span>上车 {RULES.rough.board} 人</span><span>下车 {RULES.rough.alight} 人</span></div>
             <div className="rule missed"><b>😡 冲过站</b><span>没人上车</span><span>下车 {RULES.missed.alight} 人</span></div>
           </div>
-          <p className="note center-note">出发时车上有 {START_PASSENGERS} 人。跑完全程，<b>车上乘客最多</b>的司机获胜！</p>
+          <div className="rule-cards extra">
+            <div className="rule combo"><b>🔥 连击</b><span>连续精准停车，上车人数</span><span>×{COMBO[2]} → ×{COMBO[3]} → ×{COMBO[4]}</span></div>
+            <div className="rule door"><b>🚪 开错门</b><span>乘客等急了</span><span>少上 {WRONG_DOOR_PENALTY} 人</span></div>
+            <div className="rule late"><b>🏃 等等迟到乘客</b><span>有人跑来时先别关门</span><span>多上 {LATE_BONUS} 人</span></div>
+          </div>
+          <p className="note center-note">出发时车上有 {START_PASSENGERS} 人，每上来一位乘客赚 1 枚 🪙 金币。跑完全程，<b>车上乘客最多</b>的司机获胜！</p>
         </div>
       )}
 
@@ -290,7 +306,8 @@ export default function Home() {
 
       {screen === "play" && (
         <Drive key={turn} line={line} trip={trip} player={players[turn] || "小司机"}
-          onFinish={finish} onQuit={() => setScreen("setup")} muted={mute} onMute={() => setMute(!mute)} />
+          onFinish={finish} onQuit={() => setScreen("setup")} muted={mute} onMute={() => setMute(!mute)}
+          skin={skinById(progress && progress.skin)} />
       )}
 
       {screen === "handover" && (
@@ -322,7 +339,10 @@ export default function Home() {
               <div className="panel" key={p}>
                 <h3>{players[p]} <span className="title">{rankTitle(rs)}</span></h3>
                 <div className="totalscore">{pax(rs)}<small> 位乘客</small></div>
-                <p className="note">驾驶分 {sum(rs)} · 精准停车 {rs.filter((r) => r.kind === "precise").length}/{rs.length} 站</p>
+                <p className="note">
+                  驾驶分 {sum(rs)} · 精准停车 {rs.filter((r) => r.kind === "precise").length}/{rs.length} 站
+                  · 最高连击 {Math.max(0, ...rs.map((r) => r.combo || 0))} · 🪙 赚了 <b>{rs.reduce((n, r) => n + (r.coins || 0), 0)}</b> 金币
+                </p>
                 {daily && myRanks[p] && (
                   <p className="global-rank">🌏 全城第 <b>{myRanks[p].rank}</b> 名（今天共 {myRanks[p].total} 位司机）</p>
                 )}
@@ -333,7 +353,7 @@ export default function Home() {
                       <tr key={i}>
                         <td>{r.station}</td>
                         <td>{r.missed ? "冲过站" : `偏差 ${Math.abs(r.err).toFixed(1)} 米`}</td>
-                        <td>⬆️{r.board} ⬇️{r.alight}</td>
+                        <td>⬆️{r.board}{r.mult > 1 ? "🔥" : ""} ⬇️{r.alight}{r.wrongDoor ? " 🚪✗" : ""}{r.lateBonus ? " 🏃" : ""}</td>
                         <td><b>{r.onboard}</b> 人</td>
                       </tr>
                     ))}
@@ -352,6 +372,36 @@ export default function Home() {
           <div className="row">
             <button className="big go" onClick={start}>再来一次 🔁</button>
             <button className="big alt" onClick={() => setScreen("home")}>回到首页 🏠</button>
+          </div>
+        </div>
+      )}
+
+      {screen === "garage" && progress && (
+        <div className="page garage">
+          <button className="back-btn" onClick={() => setScreen("home")}>← 回到首页</button>
+          <h1 className="logo small">🎨 车库</h1>
+          <p className="sub">每上来一位乘客赚 1 枚金币。攒够了就能换新涂装，开车时整列车都会换上！</p>
+          <div className="coin-bank">🪙 <b>{progress.coins}</b> 枚金币</div>
+          <div className="skins">
+            {SKINS.map((sk) => {
+              const owned = progress.skins.includes(sk.id);
+              const using = progress.skin === sk.id;
+              return (
+                <div key={sk.id} className={"skin-card" + (using ? " using" : "")}>
+                  <SkinPreview skin={sk} />
+                  <b>{sk.name}</b>
+                  <span className="skin-desc">{sk.desc}</span>
+                  {using ? <button className="skin-btn using" disabled>✔ 正在使用</button>
+                    : owned ? <button className="skin-btn" onClick={() => setProgress(equipSkin(sk.id))}>换上</button>
+                    : (
+                      <button className="skin-btn buy" disabled={progress.coins < sk.price}
+                        onClick={() => { const r = buySkin(sk.id); if (r.ok) { setProgress(r.p); sfx.win(); if (r.fresh.length) setFresh(r.fresh); } }}>
+                        🪙 {sk.price} {progress.coins < sk.price ? `（还差 ${sk.price - progress.coins}）` : "兑换"}
+                      </button>
+                    )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -453,4 +503,19 @@ function GlobalBoard({ data }) {
       )}
     </div>
   );
+}
+
+function SkinPreview({ skin }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const d = window.devicePixelRatio || 1;
+    const w = cv.clientWidth || 260, h = cv.clientHeight || 110;
+    cv.width = w * d; cv.height = h * d;
+    const c = cv.getContext("2d");
+    c.setTransform(d, 0, 0, d, 0, 0);
+    drawTrainPreview(c, w, h, skin, LINES[0]);
+  }, [skin]);
+  return <canvas ref={ref} className="skin-preview" />;
 }

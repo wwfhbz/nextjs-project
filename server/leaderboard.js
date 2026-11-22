@@ -6,9 +6,9 @@
 // 接口：
 //   GET  /api/daily/2026-11-22?limit=20   → { date, total, top: [{ rank, name, passengers, score }] }
 //   POST /api/daily/2026-11-22            → { rank, total, best }
-//        body: { device, name, kinds: ["precise","rough",...], score }
+//        body: { device, name, stops: [{ kind, wrongDoor, lateBonus }, ...], score }
 //
-// 防作弊：乘客人数由服务器按每站结果（kinds）重新计算，分数有上限；
+// 防作弊：乘客人数由服务器按每站结果重新计算（规则见 lib/rules.js，与游戏共用），分数有上限；
 // 只接受北京时间“今天”（容许前后 1 天，照顾跨零点）的成绩；同一设备每天只保留最好一次。
 
 const http = require("http");
@@ -20,9 +20,9 @@ const HOST = process.env.HOST || "127.0.0.1";
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const KEEP_DAYS = 30;
 
-// 与游戏规则一致（components/Drive.js）
-const START = 100;
-const RULES = { precise: [100, 30], rough: [30, 50], missed: [0, 50] }; // [上车, 下车]
+// 接乘客规则与游戏共用：部署时 rules.js 和本文件放在同一目录；在项目里运行时用 ../lib/rules.js
+const RULES_PATH = fs.existsSync(path.join(__dirname, "rules.js")) ? path.join(__dirname, "rules.js") : path.join(__dirname, "..", "lib", "rules.js");
+const { RULES, simulate } = require(RULES_PATH);
 const MAX_SCORE_PER_STOP = 120;
 const DAILY_STOPS = 5;
 
@@ -35,14 +35,6 @@ function bjDate(offsetDays = 0) {
 }
 function validDay(date) {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) && [bjDate(-1), bjDate(0), bjDate(1)].includes(date);
-}
-function passengersOf(kinds) {
-  let n = START;
-  for (const k of kinds) {
-    const [board, alight] = RULES[k];
-    n = n - Math.min(n, alight) + board;
-  }
-  return n;
 }
 const BAD = ["傻", "笨蛋", "死", "滚", "操", "妈的", "sb", "fuck", "shit"];
 function cleanName(raw) {
@@ -140,7 +132,10 @@ const server = http.createServer(async (req, res) => {
     let body;
     try { body = JSON.parse(await readBody(req)); } catch (e) { return send(res, 400, { error: "格式不对" }); }
     const device = String(body.device || "");
-    const kinds = Array.isArray(body.kinds) ? body.kinds : [];
+    // 兼容旧版前端只传 kinds 的情况
+    const stops = (Array.isArray(body.stops) ? body.stops : Array.isArray(body.kinds) ? body.kinds.map((k) => ({ kind: k })) : [])
+      .map((st) => ({ kind: st && st.kind, wrongDoor: !!(st && st.wrongDoor), lateBonus: !!(st && st.lateBonus) }));
+    const kinds = stops.map((st) => st.kind);
     const score = Number(body.score);
     if (!/^[a-z0-9-]{8,40}$/i.test(device)) return send(res, 400, { error: "设备标识不对" });
     if (kinds.length !== DAILY_STOPS || !kinds.every((k) => k in RULES)) return send(res, 400, { error: "停车记录不对" });
@@ -149,7 +144,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 400, { error: "分数不对" });
     }
 
-    const entry = { name: cleanName(body.name), passengers: passengersOf(kinds), score, at: Date.now() };
+    const entry = { name: cleanName(body.name), passengers: simulate(stops), score, at: Date.now() };
     const day = load(date);
     const old = day.get(device);
     if (!old || entry.passengers > old.passengers || (entry.passengers === old.passengers && entry.score > old.score)) {
