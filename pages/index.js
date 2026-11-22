@@ -2,10 +2,10 @@ import Head from "next/head";
 import { useEffect, useRef, useState } from "react";
 import Drive, { RULES, START_PASSENGERS } from "../components/Drive";
 import { LINES, LEVELS, buildTrip } from "../lib/lines";
-import { setMuted, sfx } from "../lib/sound";
+import { say, setMuted, sfx } from "../lib/sound";
 import { ACHIEVEMENTS, buySkin, dailyPlan, loadProgress, recordTrip, todayKey, equipSkin } from "../lib/progress";
 import { SKINS, skinById } from "../lib/skins";
-import { COMBO, LATE_BONUS, simulate, WRONG_DOOR_PENALTY } from "../lib/rules";
+import { COMBO, EVENT_BONUS, EVENT_PENALTY, LATE_BONUS, simulate, WRONG_DOOR_PENALTY } from "../lib/rules";
 import { drawTrainPreview } from "../components/scene";
 import { makePoster } from "../lib/poster";
 import { apiEnabled, fetchDaily, submitDaily } from "../lib/api";
@@ -28,6 +28,12 @@ function saveScore(id, entry) {
   try { localStorage.setItem(KEY, JSON.stringify(b)); } catch (e) {}
   return b;
 }
+// 首页“读给我听”：给还不认字的小朋友
+const HOW_TO = "怎么开地铁？按住绿色的加速按钮，列车就出发。快到站的时候，按住红色的刹车按钮，" +
+  "让车头的绿色小箭头对准红色的停车牌。停稳以后，听广播说从哪边下车，就按那一边的开门按钮。" +
+  "乘客上完了再按关门。如果有乘客跑过来，先等一等他。路上听到提示，就按中间黄色的按钮。" +
+  "停得越准，上车的乘客越多，车上乘客最多的小司机获胜！";
+
 // 称号：和“每站都精准停车”的满分人数比
 function rankTitle(rs) {
   const top = simulate(rs.map(() => ({ kind: "precise" })));
@@ -80,8 +86,12 @@ export default function Home() {
       setTrip(buildTrip(daily.line, daily.startIndex, daily.dir, daily.stops));
     } else {
       const n = line.stations.length;
-      const dir = Math.random() < 0.5 ? 1 : -1;
-      const first = Math.floor(Math.random() * (n - stops));
+      let dir = Math.random() < 0.5 ? 1 : -1;
+      let first = Math.floor(Math.random() * (n - stops));
+      // 测试用：?route=线路.方向.起点 指定区间，例如 ?route=4.-1.5
+      const pin = typeof location !== "undefined" && new URLSearchParams(location.search).get("route");
+      const m = pin && /^(\d+)\.(-?1)\.(\d+)$/.exec(pin);
+      if (m && +m[1] === line.id && +m[3] < n - stops) { dir = +m[2]; first = +m[3]; }
       const startIndex = dir > 0 ? first : first + stops;
       setTrip(buildTrip(line, startIndex, dir, stops));
     }
@@ -109,8 +119,19 @@ export default function Home() {
       name: players[turn] || "小司机", passengers: pax(results), score: sum(results),
       date: new Date().toLocaleDateString(),
     }));
-    if (turn + 1 < players.length) setScreen("handover");
-    else { sfx.win(); setScreen("result"); }
+    if (turn + 1 < players.length) {
+      setScreen("handover");
+      say(`${players[turn] || "小司机"}跑完啦，车上有${pax(results)}位乘客。请把手机交给${players[turn + 1]}。`, { interrupt: true });
+    } else {
+      sfx.win();
+      setScreen("result");
+      if (list.length === 2) {
+        const d = beats(list[0], list[1]);
+        say(d === 0 ? "平局！两位都很棒！" : `${d > 0 ? players[0] : players[1]}获胜啦！`, { interrupt: true });
+      } else {
+        say(`跑完啦！车上一共有${pax(results)}位乘客，真棒！`, { interrupt: true });
+      }
+    }
   }
 
   const top = (board[boardId] || []).slice(0, 5);
@@ -213,7 +234,10 @@ export default function Home() {
             })}
           </div>
 
-          <h2 className="step-title"><span className="step-no">2</span>怎么开地铁？</h2>
+          <h2 className="step-title">
+            <span className="step-no">2</span>怎么开地铁？
+            <button className="read-btn" onClick={() => { sfx.unlock(); say(HOW_TO, { interrupt: true }); }}>🔊 读给我听</button>
+          </h2>
           <div className="how-cards">
             <div className="how-card"><span className="hc-icon go">🚀</span><b>按住加速</b><span>列车出发，松开会慢慢滑行</span></div>
             <div className="how-card"><span className="hc-icon brake">✋</span><b>按住刹车</b><span>快到站时减速，看信号灯提示</span></div>
@@ -232,6 +256,10 @@ export default function Home() {
             <div className="rule combo"><b>🔥 连击</b><span>连续精准停车，上车人数</span><span>×{COMBO[2]} → ×{COMBO[3]} → ×{COMBO[4]}</span></div>
             <div className="rule door"><b>🚪 开错门</b><span>乘客等急了</span><span>少上 {WRONG_DOOR_PENALTY} 人</span></div>
             <div className="rule late"><b>🏃 等等迟到乘客</b><span>有人跑来时先别关门</span><span>多上 {LATE_BONUS} 人</span></div>
+          </div>
+          <div className="rule-cards extra">
+            <div className="rule event"><b>📢 🔔 小事件</b><span>乘客紧急呼叫、前方施工人员</span><span>6 秒内按按钮：+{EVENT_BONUS}，没按 −{EVENT_PENALTY}</span></div>
+            <div className="rule work"><b>🚧 施工区</b><span>临时限速 40</span><span>不超速 +{EVENT_BONUS}，超速 −{EVENT_PENALTY}</span></div>
           </div>
           <p className="note center-note">出发时车上有 {START_PASSENGERS} 人，每上来一位乘客赚 1 枚 🪙 金币。跑完全程，<b>车上乘客最多</b>的司机获胜！</p>
         </div>
@@ -353,7 +381,7 @@ export default function Home() {
                       <tr key={i}>
                         <td>{r.station}</td>
                         <td>{r.missed ? "冲过站" : `偏差 ${Math.abs(r.err).toFixed(1)} 米`}</td>
-                        <td>⬆️{r.board}{r.mult > 1 ? "🔥" : ""} ⬇️{r.alight}{r.wrongDoor ? " 🚪✗" : ""}{r.lateBonus ? " 🏃" : ""}</td>
+                        <td>⬆️{r.board}{r.mult > 1 ? "🔥" : ""} ⬇️{r.alight}{r.wrongDoor ? " 🚪✗" : ""}{r.lateBonus ? " 🏃" : ""}{r.event === "ok" ? " ✅" : r.event === "fail" ? " ⚠️" : ""}</td>
                         <td><b>{r.onboard}</b> 人</td>
                       </tr>
                     ))}

@@ -235,7 +235,7 @@ function drawSceneInner(c, W, H, s, o) {
       const px = X(m);
       if (px < -40 || px > W + 40) return;
       const r = clamp(vs * 0.55, 13, 26);
-      const cy = bodyTop - 0.4 * vs;
+      const cy = bodyTop - 1.05 * vs;
       c.fillStyle = "#9aa3b5";
       c.fillRect(px - 2, cy, 4, ty - cy);
       c.beginPath(); c.arc(px, cy, r, 0, 7);
@@ -248,7 +248,69 @@ function drawSceneInner(c, W, H, s, o) {
     });
   }
 
+  // ---------- 施工区：护栏 + 限速牌 ----------
+  const zone = seg.event && seg.event.zone;
+  if (zone) {
+    const a = X(zone.from), b = X(zone.to);
+    if (b > -40 && a < W + 40) {
+      const top = ty - 0.75 * vs, h = 0.55 * vs, stripe = Math.max(8, 0.5 * sc);
+      c.save();
+      c.beginPath(); c.rect(a, top, b - a, h); c.clip();
+      for (let x = a - h; x < b + h; x += stripe * 2) {
+        c.fillStyle = "#f97316";
+        c.beginPath(); c.moveTo(x, top + h); c.lineTo(x + stripe, top + h); c.lineTo(x + stripe + h, top); c.lineTo(x + h, top); c.closePath(); c.fill();
+      }
+      c.restore();
+      c.fillStyle = "#fff";
+      c.globalCompositeOperation = "destination-over";
+      c.fillRect(a, top, b - a, h);
+      c.globalCompositeOperation = "source-over";
+      [[zone.from, String(zone.kmh), "#e53935"], [zone.to, "解除", "#43a047"]].forEach(([m, txt, col]) => {
+        const px = X(m);
+        const r = clamp(vs * 0.55, 13, 26), cy = bodyTop - 1.05 * vs;
+        c.fillStyle = "#9aa3b5"; c.fillRect(px - 2, cy, 4, ty - cy);
+        c.beginPath(); c.arc(px, cy, r, 0, 7); c.fillStyle = "#fff"; c.fill();
+        c.lineWidth = r * 0.24; c.strokeStyle = col; c.stroke();
+        c.fillStyle = "#1d2433"; c.font = `900 ${r * (txt.length > 2 ? 0.62 : 0.85)}px sans-serif`;
+        c.textAlign = "center"; c.textBaseline = "middle";
+        T(c, txt, px, cy + 1);
+      });
+      const px = X(zone.from) + 2.5 * sc;
+      c.fillStyle = "#facc15";
+      c.beginPath(); c.moveTo(px, top - 1.05 * vs); c.lineTo(px + 0.55 * vs, top - 0.1 * vs); c.lineTo(px - 0.55 * vs, top - 0.1 * vs); c.closePath(); c.fill();
+      c.fillStyle = "#1d2433"; c.font = `900 ${clamp(vs * 0.38, 10, 18)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+      T(c, "施工", px, top - 0.38 * vs);
+    }
+  }
+
+  // ---------- 施工人员（鸣笛事件）：鸣笛后让到一边 ----------
+  if (seg.event && seg.event.type === "horn" && s.evResult !== "ok") {
+    const base = seg.event.at + 22; // 就在前方不远处，按鸣笛时能看到
+    [0, 2.2].forEach((dm, k) => {
+      const px = X(base + dm);
+      if (px < -40 || px > W + 40) return;
+      const hgt = clamp(vs * 1.6, 28, 90), foot = ty - 0.05 * vs;
+      person(c, px, foot, hgt, { body: "#f97316", legs: "#1e3a8a", hair: "#facc15" });
+      c.fillStyle = "#fde047"; // 反光条
+      c.fillRect(px - hgt * 0.13, foot - hgt * 0.5, hgt * 0.26, hgt * 0.05);
+      if (k === 0 && s.ev) {
+        c.fillStyle = "#fff"; c.font = `bold ${clamp(vs * 0.42, 11, 18)}px "PingFang SC","Microsoft YaHei",sans-serif`;
+        c.textAlign = "center"; c.textBaseline = "middle";
+        T(c, "⚠️", px, foot - hgt * 1.15);
+      }
+    });
+  }
+
   drawTrain(c, W, H, s, { X, sc, vs, ty, bodyTop, bodyBot, wireY, line, terminal, doorsOpen, skin });
+
+  // ---------- 乘客紧急呼叫：3 号车厢车顶红灯闪烁 ----------
+  if (s.ev && s.ev.type === "intercom" && Math.floor(performance.now() / 250) % 2 === 0) {
+    const px = X(s.x - 2.5 * CAR_LEN);
+    c.fillStyle = "#ef4444";
+    c.beginPath(); c.arc(px, bodyTop - 0.45 * vs, Math.max(6, 0.25 * vs), 0, 7); c.fill();
+    c.fillStyle = "rgba(239,68,68,.25)";
+    c.beginPath(); c.arc(px, bodyTop - 0.45 * vs, Math.max(14, 0.7 * vs), 0, 7); c.fill();
+  }
 
   // ---------- 站台（前景）、站台门、候车乘客 ----------
   atStation.forEach(({ mark, a, b, on }) => {
