@@ -6,7 +6,7 @@
 // 接口：
 //   GET  /api/daily/2026-11-22?limit=20   → { date, total, top: [{ rank, name, passengers, score }] }
 //   POST /api/daily/2026-11-22            → { rank, total, best }
-//        body: { device, name, stops: [{ kind, wrongDoor, lateBonus }, ...], score }
+//        body: { device, name, stops: [{ kind, wrongDoor, lateBonus, event }, ...], score }
 //
 // 防作弊：乘客人数由服务器按每站结果重新计算（规则见 lib/rules.js，与游戏共用），分数有上限；
 // 只接受北京时间“今天”（容许前后 1 天，照顾跨零点）的成绩；同一设备每天只保留最好一次。
@@ -134,7 +134,10 @@ const server = http.createServer(async (req, res) => {
     const device = String(body.device || "");
     // 兼容旧版前端只传 kinds 的情况
     const stops = (Array.isArray(body.stops) ? body.stops : Array.isArray(body.kinds) ? body.kinds.map((k) => ({ kind: k })) : [])
-      .map((st) => ({ kind: st && st.kind, wrongDoor: !!(st && st.wrongDoor), lateBonus: !!(st && st.lateBonus) }));
+      .map((st) => ({
+        kind: st && st.kind, wrongDoor: !!(st && st.wrongDoor), lateBonus: !!(st && st.lateBonus),
+        event: st && (st.event === "ok" || st.event === "fail") ? st.event : null,
+      }));
     const kinds = stops.map((st) => st.kind);
     const score = Number(body.score);
     if (!/^[a-z0-9-]{8,40}$/i.test(device)) return send(res, 400, { error: "设备标识不对" });

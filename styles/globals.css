@@ -444,3 +444,22 @@ input { font-family: inherit; -webkit-user-select: text; user-select: text; }
 .skin-btn.buy { background: var(--yellow); color: #3b2a00; box-shadow: 0 4px 0 #e0b100; }
 .skin-btn.buy:disabled { background: #f1f5fb; color: #94a3b8; box-shadow: none; }
 .skin-btn.using { background: #dcfce7; color: var(--green-dark); }
+
+/* ---------- 信号灯 / 小事件 ---------- */
+.status.alert-red { color: #b91c1c; }
+.status.alert-bad { color: var(--red); }
+.status.alert-ok { color: var(--green-dark); }
+.status.alert-warn { color: #c2410c; }
+.status.alert-event { color: #fff; background: #ef4444; border-radius: 10px; padding: 4px 8px; animation: blinkop .5s infinite alternate; }
+.event-btn { width: 100%; max-width: 260px; min-height: 96px; border-radius: 22px; color: #1d2a4d; font-size: clamp(20px, 4.5vw, 28px); font-weight: 900;
+  background: radial-gradient(circle at 40% 30%, #fde68a, #f59e0b); border: 5px solid #fff; box-shadow: 0 7px 0 #92400e, 0 0 0 0 rgba(245,158,11,.7);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; animation: ring 0.8s infinite; }
+.event-btn span { font-size: 1.3em; line-height: 1; }
+.event-btn small { font-size: 13px; color: #7c2d12; }
+.event-btn:active { transform: translateY(5px); box-shadow: 0 2px 0 #92400e; }
+@keyframes ring { 70% { box-shadow: 0 7px 0 #92400e, 0 0 0 16px rgba(245,158,11,0); } }
+@media (max-width: 520px) { .event-btn { min-height: 84px; font-size: 18px; } }
+.rule.event { background: #fef9c3; }
+.rule.work { background: #ffedd5; }
+.read-btn { margin-left: auto; font-family: var(--body); font-size: 15px; font-weight: bold; background: #fff; border-radius: 99px;
+  padding: 8px 14px; box-shadow: 0 3px 0 rgba(29,42,77,.15); }
