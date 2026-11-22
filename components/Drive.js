@@ -657,7 +657,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
             {evt ? (
               <button className="event-btn" onClick={handleEvent}>
                 <span>{EVENTS[evt.type].icon}</span>{EVENTS[evt.type].btn}
-                <small>{Math.ceil(hud.evLeft || 0)} 秒</small>
+                <small>{Math.ceil(hud.evLeft || EVENT_TIME)} 秒</small>
               </button>
             ) : (
               <>

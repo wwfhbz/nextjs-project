@@ -285,7 +285,7 @@ function drawSceneInner(c, W, H, s, o) {
 
   // ---------- 施工人员（鸣笛事件）：鸣笛后让到一边 ----------
   if (seg.event && seg.event.type === "horn" && s.evResult !== "ok") {
-    const base = seg.event.at + 45; // 就在前方不远处，按鸣笛时能看到
+    const base = seg.event.at + 22; // 就在前方不远处，按鸣笛时能看到
     [0, 2.2].forEach((dm, k) => {
       const px = X(base + dm);
       if (px < -40 || px > W + 40) return;
