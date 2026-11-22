@@ -1,0 +1,19 @@
+# 地铁冲冲冲！排行榜服务 —— systemd 配置
+# 放到 /etc/systemd/system/ditie-leaderboard.service，然后：
+#   systemctl daemon-reload && systemctl enable --now ditie-leaderboard
+[Unit]
+Description=Ditie Chongchongchong daily leaderboard
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/env node /opt/ditie/leaderboard.js
+Environment=PORT=3210
+Environment=HOST=127.0.0.1
+Environment=DATA_DIR=/var/lib/ditie
+Restart=always
+RestartSec=3
+DynamicUser=yes
+StateDirectory=ditie
+
+[Install]
+WantedBy=multi-user.target
