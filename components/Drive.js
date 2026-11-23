@@ -97,9 +97,14 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
 
   const seg = trip.segs[segIdx];
 
-  function announce({ zh, en }) {
+  function announce({ zh, en }, opts) {
     setBanner({ zh, en: enText(en) });
-    speak(zh, en);
+    speak(zh, en, opts);
+  }
+  // 松开所有按键：换按钮、停站、换区间、切到后台时调用，防止“刹车卡住”
+  function releaseAll() {
+    input.current.acc = false;
+    input.current.brk = false;
   }
   // 语音提示：同一区间里每种提示只说一次
   function voice(key, text, opts) {
@@ -124,8 +129,11 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
     setCanClose(false);
     setLateRun(false);
     sfx.doorClose();
-    announce(departCall(seg.to, trip.terminal, transfersAt(seg.to, line.id), segIdx % 2 === 1));
-    if (segIdx === 0) voice("go", "小司机，按住右边绿色的加速按钮，出发啦！");
+    releaseAll();
+    // 语音顺序：先告诉小朋友怎么做，再播报站点信息
+    say(segIdx === 0 ? "小司机，按住右边绿色的加速按钮，出发啦！" : "按住绿色的加速按钮，发车！", { interrupt: true });
+    g.current.said.add("go");
+    announce(departCall(seg.to, trip.terminal, transfersAt(seg.to, line.id), segIdx % 2 === 1), { queue: true });
   }, [segIdx]);
 
   // 第 1 步：列车停稳（或冲过站）——先算停车准度
@@ -161,9 +169,15 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
     setPhase("stopped");
     setDoorMsg("");
     // 新手线直接告诉开哪边；进阶、高手要自己听广播
-    voice("stopped", lv.hint && line.level === 1
-      ? `停稳啦！请按${seg.door}边的开门按钮。`
-      : "停稳啦！刚才广播说从哪边下车？按那边的开门按钮。");
+    releaseAll();
+    // 先说怎么做，再报站：新手线直接告诉开哪边；进阶、高手线接着再报一遍下车方向，让孩子自己听
+    if (line.level === 1) {
+      say(`停稳啦！请按${seg.door}边的开门按钮。`, { interrupt: true });
+    } else {
+      say("停稳啦！听广播，从哪边下车，就按哪边的开门按钮。", { interrupt: true });
+      speak(`${seg.to}到了，请从列车前进方向${seg.door}侧车门下车。`, null, { queue: true });
+    }
+    g.current.said.add("stopped");
   }
 
   // 第 2 步：开门——听广播，开对哪一边
@@ -212,6 +226,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
       s.pending.lateBonus = !!(s.late && s.late.inside);
     }
     sfx.doorClose();
+    releaseAll();
     s.phase = "closing";
     setPhase("closing");
     setCanClose(false);
@@ -220,6 +235,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
 
   // 第 4 步：结算这一站
   function finalize() {
+    releaseAll();
     const s = g.current;
     const p = s.pending;
     const before = onboard;
@@ -265,9 +281,16 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
     const ku = (e) => set(e, false);
     window.addEventListener("keydown", kd);
     window.addEventListener("keyup", ku);
+    // 切到别的应用、锁屏、页面失焦时，松开所有按键
+    const relax = () => { input.current.acc = false; input.current.brk = false; };
+    const vis = () => { if (document.hidden) relax(); };
+    window.addEventListener("blur", relax);
+    document.addEventListener("visibilitychange", vis);
     return () => {
       window.removeEventListener("keydown", kd);
       window.removeEventListener("keyup", ku);
+      window.removeEventListener("blur", relax);
+      document.removeEventListener("visibilitychange", vis);
     };
   }, []);
 
@@ -458,10 +481,28 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
     };
   }, [segIdx]);
 
+  // 点按钮：只有在这个按钮上“按下并松开”才算。
+  // 防止按住刹车停车时，刹车按钮被换成开门按钮，手指一松就误点了“开左门”。
+  const armed = useRef(null);
+  const tap = (id, fn) => ({
+    onPointerDown: () => { armed.current = id; },
+    onClick: (e) => {
+      const ok = e.detail === 0 || armed.current === id; // detail 为 0 是键盘触发
+      armed.current = null;
+      if (ok) fn();
+    },
+  });
+
+  // 按住按钮：捕获这根手指，手指滑出按钮或在别处松开也能收到“松开”
   const hold = (key) => ({
-    onPointerDown: (e) => { e.preventDefault(); sfx.unlock(); input.current[key] = true; },
+    onPointerDown: (e) => {
+      e.preventDefault();
+      sfx.unlock();
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+      input.current[key] = true;
+    },
     onPointerUp: () => { input.current[key] = false; },
-    onPointerLeave: () => { input.current[key] = false; },
+    onLostPointerCapture: () => { input.current[key] = false; },
     onPointerCancel: () => { input.current[key] = false; },
     onContextMenu: (e) => e.preventDefault(),
   });
@@ -629,20 +670,20 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
             <span className="sum">驾驶分 <b>{card.total}</b></span>
             {card.coins > 0 && <span className="coins">🪙 金币 <b>+{card.coins}</b></span>}
           </div>
-          <button className="big go sh-btn" onClick={next}>{last ? "看成绩 🏁" : "发车 ▶"}</button>
+          <button className="big go sh-btn" {...tap("next", next)}>{last ? "看成绩 🏁" : "发车 ▶"}</button>
         </div>
       ) : phase === "stopped" ? (
         <div className="console doors">
-          <button className="door-btn" onClick={() => openDoor("左")}>
+          <button className="door-btn" {...tap("left", () => openDoor("左"))}>
             <span className="door-arrow">◀</span><span>开左门</span><small>列车前进方向的左边</small>
           </button>
-          <button className="door-btn" onClick={() => openDoor("右")}>
+          <button className="door-btn" {...tap("right", () => openDoor("右"))}>
             <span>开右门</span><span className="door-arrow">▶</span><small>列车前进方向的右边</small>
           </button>
         </div>
       ) : phase === "open" || phase === "closing" ? (
         <div className="console doors">
-          <button className={"close-btn" + (lateRun ? " wait" : "")} disabled={!canClose || phase === "closing"} onClick={closeDoor}>
+          <button className={"close-btn" + (lateRun ? " wait" : "")} disabled={!canClose || phase === "closing"} {...tap("close", closeDoor)}>
             {phase === "closing" ? "关门中…" : !canClose ? "乘客上下车中…" : lateRun ? "⏳ 有人跑来了…（现在关门他就赶不上）" : "🚪 关门"}
           </button>
         </div>
@@ -655,7 +696,7 @@ export default function Drive({ line, trip, player, onFinish, onQuit, muted, onM
           </button>
           <div className="console-mid">
             {evt ? (
-              <button className="event-btn" onClick={handleEvent}>
+              <button className="event-btn" {...tap("event", handleEvent)}>
                 <span>{EVENTS[evt.type].icon}</span>{EVENTS[evt.type].btn}
                 <small>{Math.ceil(hud.evLeft || EVENT_TIME)} 秒</small>
               </button>
