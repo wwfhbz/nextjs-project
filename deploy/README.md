@@ -123,3 +123,154 @@ sudo certbot --nginx -d ditie.gmgnclaw.com
 - 用了网页上传：重新 `yarn build`，把新的 `out/` 打包上传，再执行第 2 步的解压命令。如果 `server/leaderboard.js` 或 `lib/rules.js` 改了，重新上传到 `/opt/ditie/`，然后执行 `sudo systemctl restart ditie-leaderboard`。
 
 网页本身设置了不缓存，带哈希的 JS、CSS、字体文件设置了长期缓存，所以更新后刷新一下就能看到新版本。
+
+## 服务器本地一键更新（Ubuntu）
+
+安装本节的更新器后，在腾讯云终端执行：
+
+```bash
+update-metro
+```
+
+每次都获取指定仓库 `main` 的最新提交，不按 `package.json` 版本号或 tag 固定版本。
+原有 `deploy/deploy.sh` 保持原样；不要在本地更新器运行期间使用旧上传方式，旧脚本不参与互斥锁。
+
+### 首次安装
+
+以下操作在腾讯云 Ubuntu 终端以 `ubuntu` 用户执行。**请等此功能的 PR 合并到 main 后安装**。
+已有游戏、排行榜和 HTTPS 必须已正常部署；本安装器不是首次网站/后端安装器。
+
+先确认现有工具：
+
+```bash
+git --version
+node --version          # Node.js >= 18；推荐现有兼容的 LTS
+command -v node
+yarn --version          # 必须为 Yarn Classic 1.x
+command -v yarn
+python3 --version      # Ubuntu 22.04+，Python >= 3.10
+sudo nginx -t
+sudo systemctl status ditie-leaderboard.service --no-pager
+curl --fail http://127.0.0.1:3210/api/health
+curl --fail https://ditie.gmgnclaw.com/api/health
+```
+
+更新器不会安装、覆盖或升级系统全局 Node.js/Yarn。缺工具时先准备好现有工具环境。
+然后在一个新的目录下载并安装：
+
+```bash
+INSTALL_SOURCE="$(mktemp -d "$HOME/metro-updater-install.XXXXXX")"
+git clone --branch main --single-branch \
+  https://github.com/wwfhbz/nextjs-project.git "$INSTALL_SOURCE"
+cd "$INSTALL_SOURCE"
+sudo bash deploy/install-updater.sh \
+  --build-user ubuntu --tool-path "$PATH"
+```
+
+`--tool-path "$PATH"` 记录当前可用 Node.js/Yarn 的搜索路径（适用于用户已有的 NVM 环境）；
+不要填临时构建目录，后续该路径中的工具必须一直存在。排行榜实际 Node.js 路径会单独从运行进程核对。
+Git、依赖安装和构建均以 `--build-user` 指定的非 root 用户执行；只有发布、备份和单项服务操作使用 sudo。
+安装过程会克隆一个独立的 main 工作区，不使用或覆盖你原来的游戏代码目录。
+
+安装器只安装命令和配置，**不会自动更新生产网站、停止服务、修改 Nginx 或重新申请证书**。
+它会只读检查 `nginx -T`、systemd、现有首页和 API：
+
+- HTTPS 域名必须明确匹配 `ditie.gmgnclaw.com`，并且只有一个实际根目录。
+- 兼容 `/var/www/ditie`，也兼容旧部署中指向 `/var/www/ditie/releases/<目录>` 的 root，使用实际生效目录，不自动修改 Nginx。
+- 需要常规 Ubuntu Nginx server 块；变量 root、无法解析的嵌套配置、多个 HTTPS root、容器内 Nginx 均会拒绝安装，需要先人工核对。
+- `ditie-leaderboard.service` 必须已运行，程序为 `/opt/ditie/leaderboard.js`，环境明确设置 `PORT=3210`、`HOST=127.0.0.1`、`DATA_DIR=/var/lib/ditie`，停止信号为 SIGTERM。
+- 为避免隐藏的数据目录覆盖，有额外 `EnvironmentFile` 的服务会拒绝自动安装。
+- `DynamicUser=yes` 导致 `/var/lib/ditie` 指向 `/var/lib/private/ditie` 时，会解析真实目录进行只读备份，保持原服务配置。
+- 网站必须是本地普通目录，不是挂载点；文件系统需要支持 Linux `renameat2(RENAME_EXCHANGE)`。安装会先在同一文件系统创建两个空目录试验。
+- 至少需要 2 GiB 剩余磁盘空间；若网站或成绩数据较大，会进一步提高空间要求，并在构建后再次检查。
+
+如果上面任一检查失败，安装器会停止，且不切换生产文件。可能留下专用源码目录，可修正条件后重试。
+请勿用删除排行榜数据、替换全局 Node.js 或重写其他站点配置的方式绕过检查。
+当前开发环境无法 SSH 访问生产服务器，尚未独立核实生产当前路径；上述本地检查是实际安装的必要条件。
+
+### 安装后的目录与权限
+
+| 路径 | 用途 |
+|---|---|
+| `/usr/local/bin/update-metro` | 一键更新入口，通过 sudo 请求发布权限 |
+| `/usr/local/bin/rollback-metro` | 回滚入口，同样使用 sudo |
+| `/usr/local/lib/ditie-updater/` | root 持有的更新器程序，不从用户可写源码执行特权脚本 |
+| `/etc/ditie-updater.json` | root 可读写配置，记录实际网站路径、构建用户与工具 PATH |
+| `/opt/ditie-updater/source` | 独立 main 源码工作区，属于构建用户 |
+| `/opt/ditie-updater/build-*` | 临时构建目录，结束后清理；强制断电可能留残余 |
+| `/var/lib/ditie-updater/` | 部署锁、当前版本元数据及中断恢复事务记录 |
+| `/var/backups/ditie-updater/<备份编号>/program/` | 上一个网站与两个排行榜程序文件 |
+| `/var/backups/ditie-updater/<备份编号>/data/` | 停服刷盘后的一致性成绩快照，root 私有 |
+
+没有添加免密 sudo 规则。若当前账户的 sudo 需要密码，运行命令时正常输入即可。
+安装器不会覆盖已有 `update-metro`、`rollback-metro` 或已安装配置。
+
+### 更新流程与故障行为
+
+1. 更新、安装和回滚共享同一个 `flock` 非阻塞互斥锁，重复并发命令立即报错。
+2. 核对 origin 必须为此仓库的 HTTPS 地址、当前分支必须为 main、工作区必须完全干净。
+   包括忽略文件、未跟踪文件与本地修改均不会被删除或覆盖；不要在专用源码目录放 `.env` 或运行构建。
+3. `git fetch origin main` 后验证本地 HEAD 是远端提交的祖先，再执行 `git merge --ff-only`。
+   本地超前、分叉或远端重写历史会停止；不用 `git reset --hard`、force 或自动 stash。
+4. 从核实的提交导出到独立临时目录，执行 `yarn install --frozen-lockfile --non-interactive`、`yarn build`。
+   构建失败、网络失败、缺少静态资源时，旧网站和排行榜服务始终继续运行；下次可直接重试。
+5. 检查 `out/index.html`、JS/CSS、HTML 本地资源和 CSS 字体引用以及后端语法；拒绝符号链接产物。
+6. 成功后先暂存网站及备份旧程序；再仅停止 `ditie-leaderboard.service`，等待 SIGTERM 刷盘正常退出，复制一致性成绩快照。
+   暂停只影响排行榜读写，静态游戏页面仍可访问。不是零停机排行榜更新；备份数据越大暂停越久。
+7. 用原子目录交换切换网站，在服务停止时替换 `/opt/ditie/leaderboard.js` 和 `rules.js`，然后启动同一项服务。
+   不修改 `rules.js` 内容、数据保留规则或 systemd 配置，不触碰其他游戏、Nginx、证书或 Node.js 进程。
+8. 检查本地 API、线上 API 的 `ok=true`、线上 HTML 与磁盘内容一致，并核对 `/.metro-release` 提交标记。
+   不是仅检查 HTTP 200，避免误把 Nginx 欢迎页当成成功。正常 TLS 验证保持开启，不跳过证书校验。
+9. 新发布失败会恢复旧程序并重新启动本项服务；**绝不把旧 data 快照覆盖回生产成绩目录**。
+   新版运行期间已接收并刷盘的成绩也保留。原有后端自行执行的 30 天清理规则不变。
+10. 输出提交号、阶段检查结果及总耗时；第三方命令输出不直接打印，防止 Git URL、环境或依赖日志带出凭据。
+    首次接管现有站点时无法推断旧提交号，明确显示 `unknown (首次接管)`，不会猜测。
+
+如果 main 提交与已发布的标记一致，仍做健康检查，但不构建、不创建备份、不重启服务。
+如果人工修改了网站文件导致线上首页或版本检查不通过，会停止并要求核对。
+更新器本身不自动从 main 替换特权脚本；main 的游戏和排行榜程序会持续更新，不固定版本。
+
+### 回滚
+
+回滚到最近一份可用程序备份（无需下载或重新构建）：
+
+```bash
+rollback-metro
+```
+
+查看可用备份编号，并指定回滚目标：
+
+```bash
+sudo find /var/backups/ditie-updater -mindepth 2 -maxdepth 2 \
+  -type d -name program -printf '%h\n' | sort -r
+rollback-metro 备份编号
+```
+
+回滚前同样备份当前程序和一致性数据，发布后检查本地及线上服务；即使当前后端已停止也可回滚（使用安装时核对的 Node.js 路径），回滚失败会恢复回滚前的程序。
+默认保留最近 **5 份程序备份**（更新与回滚合并计数）。数据快照不自动删除，也不自动恢复，
+因此随着更新次数增加会占用空间；空间不足时更新器拒绝发布。成绩生产目录从不被更新器清空或覆盖。
+
+命令被 Ctrl+C 或 SIGTERM 中断时尝试恢复程序。若被 SIGKILL、断电或系统崩溃打断，
+持久化事务会保留；重新执行 `update-metro` 或 `rollback-metro` 时先恢复原程序并退出，确认后再运行一次。
+这不是开机自动恢复服务；异常停电后应及时运行一次命令检查。若恢复本身失败，保留事务与备份，不清理现场，
+先检查磁盘空间和 `sudo journalctl -u ditie-leaderboard.service -n 50 --no-pager`，不要手动恢复旧 data 覆盖新成绩。
+
+### 更新器自身升级
+
+日常只需 `update-metro`。仅当更新器程序有修复时，先从最新 main 获取并审查 `deploy/` 变更。
+确认没有更新或回滚运行后，以 root 在 `/var/lib/ditie-updater/deploy.lock` 的排他锁内备份并替换
+`/usr/local/lib/ditie-updater/` 下的 `update.sh`、`rollback.sh`、`updater.py`，保持 root 所有及 0755 权限；
+不要删除状态、程序备份或成绩目录，不重装全局 Node.js。
+
+### 开发验证（非生产）
+
+```bash
+bash -n deploy/update.sh deploy/install-updater.sh deploy/rollback.sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/tests -v
+```
+
+测试使用临时目录和真实 Git 仓库、真实 Node.js 排行榜、真实原子目录交换；
+依赖下载/Next 构建、systemd、Nginx 和公网访问边界由测试替身模拟。
+覆盖正常更新、重复更新、构建/依赖/Git 网络失败、缺失资源、上线健康失败、保留新成绩的自动/手动回滚、
+中断恢复、异常停服、仓库地址/分支/本地修改/分叉保护、互斥锁及备份保留。
+真实 Next.js 构建单独验证，不在生产服务器运行故障注入测试。
